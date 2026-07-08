@@ -76,6 +76,31 @@ python3 -m venv venv && venv/bin/pip install -r requirements.txt pytest
 venv/bin/pytest
 ```
 
+## Reference: the bigger TV-enhancement projects
+
+Ideas beyond this daemon's scope, kept here as jumping-off points:
+
+- **Internal LUT calibration** — the C9 accepts 3D LUT uploads into its
+  calibration slots; [bscpylgtv](https://github.com/chros73/bscpylgtv) was
+  built for this (`cal_commands`/`lut_tools`), driven by
+  [DisplayCAL](https://displaycal.net/) or
+  [HCFR](https://sourceforge.net/projects/hcfr/) plus a colorimeter. Guides:
+  [profiling SDR](https://github.com/chros73/bscpylgtv/tree/master/docs/guides/profiling_sdr),
+  [calibrating HDR10](https://github.com/chros73/bscpylgtv/tree/master/docs/guides/calibrating_hdr10),
+  [setting presets](https://github.com/chros73/bscpylgtv/tree/master/docs/guides/setting_presets),
+  [mitigating DoVi raised black](https://github.com/chros73/bscpylgtv/tree/master/docs/guides/mitigating_dovi_raised_black).
+- **DIY Ambilight** —
+  [Hyperion](https://github.com/hyperion-project/hyperion.ng) or
+  [WLED](https://kno.wled.ge/) driving LEDs behind the panel from an HDMI
+  grabber. Caveat on webOS: a grabber can't see the TV's own apps, only
+  external sources.
+- **Home Assistant** — the
+  [webostv integration](https://www.home-assistant.io/integrations/webostv/)
+  for presence/scene automations; same LAN API underneath, coexists with
+  this daemon.
+- **Power/idle automation** — wake-on-LAN, HDMI-CEC from the Pi
+  (`cec-utils`) for when webOS's network stack is asleep.
+
 ## Security model
 
 Same trust story as tv-dsp: LAN-only, the sole credential is the webOS pairing
