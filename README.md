@@ -34,25 +34,6 @@ src/
 └── tv.py     # eyeComfortMode get/set via bscpylgtv, timeout-guarded
 ```
 
-## Scripts
-
-**`scripts/force-picture-mode.py`** — one-off: force picture modes into every
-input × dynamic-range slot. LG stores the picture mode per input *and* per
-dynamic range (`picture$<input>.x.2d.<dynamicRange>`), so a menu change only
-affects the slot you're watching; this sweeps them all. Defaults: `expert1`
-(SDR) / `hdrCinema` (HDR) / `dolbyHdrCinema` (DV), game modes for the ALLM
-slots. Override per range with `sdr=cinema hdr=hdrVivid …`; `--dry-run` prints
-the plan. Reads host/key from `LGTV_HOST`/`LGTV_KEY`. The scoped-category luna
-syntax is documented against newer models — verify one slot first:
-
-```bash
-scripts/force-picture-mode.py --inputs hdmi1 sdr=expert1
-```
-
-**`scripts/tv-status.py`** — show the external input list (labels, icons,
-what's connected), the foreground app, and — where the firmware allows the
-read — the current picture mode. Same `LGTV_HOST`/`LGTV_KEY` env.
-
 ## Configuration
 
 Env-only (12-factor). Required: `LGTV_HOST`, `LGTV_LAT`, `LGTV_LON`.
