@@ -53,14 +53,19 @@ read a fresh one from `sqlite3 ~/.aiopylgtv.sqlite 'select value from unnamed'`.
 
 ## Deploy (Pi)
 
+Copy `.env.example` to `.env` (git-ignored) and set your Pi user/host, then:
+
 ```bash
-rsync -av --exclude venv --exclude .git ./ $PI_USER@$PI_HOST:/home/pi/lg-tv-enhancer/
-ssh $PI_USER@$PI_HOST
+set -a; source .env; set +a
+rsync -av --delete --exclude venv --exclude .git --exclude __pycache__ --exclude .pytest_cache \
+    ./ "$PI_USER@$PI_HOST:/home/$PI_USER/lg-tv-enhancer/"
+ssh "$PI_USER@$PI_HOST"
 cd ~/lg-tv-enhancer
 python3 -m venv venv && venv/bin/pip install -r requirements.txt
 sudo cp systemd/lg-tv-enhancer.env.example /etc/default/lg-tv-enhancer
 sudo chmod 600 /etc/default/lg-tv-enhancer
 sudoedit /etc/default/lg-tv-enhancer      # set host, key, lat/lon
+# edit User/paths in the unit if your Pi account isn't `pi`
 sudo cp systemd/lg-tv-enhancer.service /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now lg-tv-enhancer

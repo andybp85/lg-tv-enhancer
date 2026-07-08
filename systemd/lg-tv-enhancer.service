@@ -5,6 +5,7 @@ Wants=network-online.target
 
 [Service]
 Type=simple
+# Adjust user/paths to your Pi account before installing.
 User=pi
 WorkingDirectory=/home/pi/lg-tv-enhancer
 ExecStart=/home/pi/lg-tv-enhancer/venv/bin/python src/main.py
