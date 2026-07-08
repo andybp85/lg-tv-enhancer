@@ -49,6 +49,10 @@ syntax is documented against newer models — verify one slot first:
 scripts/force-picture-mode.py --inputs hdmi1 sdr=expert1
 ```
 
+**`scripts/tv-status.py`** — show the external input list (labels, icons,
+what's connected), the foreground app, and — where the firmware allows the
+read — the current picture mode. Same `LGTV_HOST`/`LGTV_KEY` env.
+
 ## Configuration
 
 Env-only (12-factor). Required: `LGTV_HOST`, `LGTV_LAT`, `LGTV_LON`.
