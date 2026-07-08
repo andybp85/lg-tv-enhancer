@@ -1,0 +1,13 @@
+node_modules/
+dist/
+build/
+.next/
+__pycache__/
+*.lock
+coverage/
+*.generated.*
+*.min.js
+*.min.css
+.idea/
+venv/
+.venv/

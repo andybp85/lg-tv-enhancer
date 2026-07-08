@@ -1,0 +1,2 @@
+astral>=3.2        # sunset/sunrise math; mature, pure-Python, zero runtime deps
+bscpylgtv>=0.5.2   # webOS LAN client; same library tv-dsp's volume bridge uses

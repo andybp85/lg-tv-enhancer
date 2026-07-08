@@ -1,0 +1,6 @@
+beans:
+    path: .beans
+    prefix: lg-tv-enhancer-
+    id_length: 4
+    default_status: todo
+    default_type: task

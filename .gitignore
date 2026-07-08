@@ -1,0 +1,17 @@
+# Python
+__pycache__/
+*.py[cod]
+venv/
+.venv/
+.pytest_cache/
+.ruff_cache/
+.coverage
+
+# Tooling / editors
+.idea/
+.memsearch/
+.firecrawl/
+.DS_Store
+
+# Local state
+var/

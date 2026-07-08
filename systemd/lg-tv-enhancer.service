@@ -1,0 +1,23 @@
+[Unit]
+Description=LG TV Eye Comfort scheduler (on at sunset, off at sunrise)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/lg-tv-enhancer
+ExecStart=/home/pi/lg-tv-enhancer/venv/bin/python src/main.py
+Restart=on-failure
+RestartSec=5
+Environment=LOG_LEVEL=INFO
+# TV IP, webOS pairing key, and location live in a root-owned file outside git —
+# same pattern as tv-dsp (/etc/default/tv-dsp). `-` keeps the unit bootable
+# without it (the app then exits with a clear "missing environment" message).
+# See lg-tv-enhancer.env.example for a template. The pairing key must be PINNED
+# here: bscpylgtv saves a key after pairing but never reads it back, so without
+# LGTV_KEY the TV re-prompts on every restart (see tv-dsp-qs2m).
+EnvironmentFile=-/etc/default/lg-tv-enhancer
+
+[Install]
+WantedBy=multi-user.target
