@@ -5,13 +5,19 @@ import pytest
 from tv import KEY, apply_eye_comfort
 
 
+class ReadRefused(Exception):
+    """The C9 firmware's answer to a getSystemSettings for this key."""
+
+
 class FakeClient:
     """Stands in for bscpylgtv's WebOsClient; records the calls made."""
 
-    def __init__(self, initial="off", sticks=True, fail_connect=False):
+    def __init__(self, initial="off", sticks=True, fail_connect=False,
+                 read_refused=False):
         self.settings = {KEY: initial}
         self.sticks = sticks
         self.fail_connect = fail_connect
+        self.read_refused = read_refused
         self.set_calls = []
         self.disconnected = False
 
@@ -23,6 +29,9 @@ class FakeClient:
         self.disconnected = True
 
     async def get_picture_settings(self, keys):
+        if self.read_refused:
+            raise ReadRefused("Some keys are not allowed for the request. "
+                              "( eyeComfortMode )")
         return {k: self.settings[k] for k in keys}
 
     async def set_settings(self, category, settings):
@@ -59,6 +68,24 @@ def test_already_matching_skips_write():
 def test_write_that_does_not_stick_returns_false():
     client = FakeClient(initial="off", sticks=False)
     assert apply_with(client, "on") is False
+
+
+def test_read_refused_writes_blind_and_trusts_the_write():
+    # C9: eyeComfortMode is write-only via ssap GET (lg-tv-enhancer-ccuj)
+    client = FakeClient(initial="off", read_refused=True)
+    assert apply_with(client, "on") is True
+    assert client.set_calls == [{KEY: "on"}]
+
+
+def test_read_refused_write_failure_still_raises():
+    client = FakeClient(read_refused=True)
+
+    async def broken_set(category, settings):
+        raise ConnectionResetError("connection dropped mid-write")
+    client.set_settings = broken_set
+    with pytest.raises(ConnectionResetError):
+        apply_with(client, "on")
+    assert client.disconnected
 
 
 def test_connect_failure_raises_and_still_disconnects():

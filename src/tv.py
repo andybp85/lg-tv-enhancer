@@ -31,31 +31,53 @@ async def _make_client(host: str, client_key: Optional[str]):
                                     states=[], ping_interval=None)
 
 
+async def _read_mode(client) -> Optional[str]:
+    """Current eyeComfortMode, or None when this firmware refuses the read.
+
+    The C9's ssap getSystemSettings whitelists readable keys and
+    eyeComfortMode is not on it ("Some keys are not allowed for the
+    request") — the key is write-only there. Timeouts still propagate:
+    a dead connection must fail the whole attempt, not degrade to "blind".
+    """
+    try:
+        current = await asyncio.wait_for(
+            client.get_picture_settings(keys=[KEY]), REQUEST_TIMEOUT)
+        return current.get(KEY)
+    except asyncio.TimeoutError:
+        raise
+    except Exception as exc:
+        log.debug("eyeComfortMode not readable on this firmware (%s); "
+                  "writing blind", exc)
+        return None
+
+
 async def apply_eye_comfort(host: str, client_key: Optional[str], desired: str,
                             *, client_factory=_make_client) -> bool:
     """Reconcile the TV's eyeComfortMode to `desired` ("on" / "off").
 
-    Returns True when the TV already matches or confirms the new value on
-    read-back; False when the write didn't stick (e.g. unsupported firmware).
-    Raises on connection/request failure — the caller retries next tick.
+    Returns True when the TV already matches, confirms the new value on
+    read-back, or accepted the write on firmware where the key is not
+    readable (C9) — there the luna write is trusted. Returns False only on
+    a read-back mismatch. Raises on connection/request failure — the caller
+    retries next tick.
     """
     client = None
     try:
         client = await asyncio.wait_for(client_factory(host, client_key),
                                         CONNECT_TIMEOUT)
         await asyncio.wait_for(client.connect(), CONNECT_TIMEOUT)
-        current = await asyncio.wait_for(
-            client.get_picture_settings(keys=[KEY]), REQUEST_TIMEOUT)
-        if current.get(KEY) == desired:
+        current = await _read_mode(client)
+        if current == desired:
             return True
         await asyncio.wait_for(
             client.set_settings(CATEGORY, {KEY: desired}), REQUEST_TIMEOUT)
-        readback = await asyncio.wait_for(
-            client.get_picture_settings(keys=[KEY]), REQUEST_TIMEOUT)
-        ok = readback.get(KEY) == desired
+        if current is None:
+            return True
+        readback = await _read_mode(client)
+        ok = readback in (None, desired)
         if not ok:
             log.debug("eyeComfortMode write did not stick: wanted %s, read %s",
-                      desired, readback.get(KEY))
+                      desired, readback)
         return ok
     finally:
         if client is not None:
