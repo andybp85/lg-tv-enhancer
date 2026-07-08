@@ -44,7 +44,25 @@ Env-only (12-factor). Required: `LGTV_HOST`, `LGTV_LAT`, `LGTV_LON`.
 | `LGTV_KEY` | *(unset → interactive pairing)* | pinned webOS pairing key |
 | `LGTV_LAT` / `LGTV_LON` | *(required)* | location for sunset/sunrise |
 | `LGTV_POLL_SECS` | `60` | retry cadence while unreachable/pending |
+| `LGTV_CT_NIGHT` | *(unset → ramp off)* | night color temperature, `-50` (warm) … `50` (cool) |
+| `LGTV_CT_DAY` | `0` | day color temperature |
+| `LGTV_CT_RAMP_MINS` | `45` | minutes to glide between day/night temps at each transition |
 | `LOG_LEVEL` | `INFO` | stdout log level (journald) |
+
+### Circadian color temperature (optional)
+
+Set `LGTV_CT_NIGHT` (e.g. `-30`) and the daemon also glides the picture's
+color temperature f.lux-style: starting at sunset it steps from
+`LGTV_CT_DAY` to `LGTV_CT_NIGHT` over `LGTV_CT_RAMP_MINS`, and back after
+sunrise. Writes happen only when the rounded step changes (~1 per couple of
+minutes during the ramp, none otherwise), so outside the two ramp windows a
+manual adjustment sticks, same as the eye comfort override.
+
+Caveat: webOS keys `colorTemperature` *per picture mode*, and the write lands
+on whichever mode is active at that moment. If the TV switches modes mid-night
+(SDR show → Dolby Vision film), the newly active mode keeps its own
+temperature until the next step write (worst case `LGTV_POLL_SECS` during a
+ramp; next transition otherwise).
 
 **Pin the pairing key.** `bscpylgtv` saves its key after pairing but never
 reads it back, so an unset `LGTV_KEY` makes the TV show the pairing prompt on

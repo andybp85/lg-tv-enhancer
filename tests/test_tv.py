@@ -2,7 +2,7 @@ import asyncio
 
 import pytest
 
-from tv import KEY, apply_eye_comfort
+from tv import KEY, apply_eye_comfort, apply_picture_settings
 
 
 class ReadRefused(Exception):
@@ -68,6 +68,18 @@ def test_already_matching_skips_write():
 def test_write_that_does_not_stick_returns_false():
     client = FakeClient(initial="off", sticks=False)
     assert apply_with(client, "on") is False
+
+
+def test_numeric_settings_compared_as_strings():
+    # webOS stores slider values as strings ("-30"); a matching current value
+    # must short-circuit the write even though types differ
+    client = FakeClient()
+    client.settings["colorTemperature"] = "-30"
+    ok = asyncio.run(apply_picture_settings(
+        "10.0.0.2", "key", {"colorTemperature": -30},
+        client_factory=factory_for(client)))
+    assert ok is True
+    assert client.set_calls == []
 
 
 def test_read_refused_writes_blind_and_trusts_the_write():

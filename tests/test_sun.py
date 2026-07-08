@@ -2,7 +2,7 @@ from datetime import datetime, timedelta, timezone
 
 from astral import Observer
 
-from sun import DAY, NIGHT, POLAR_RECHECK, Phase, current_phase
+from sun import DAY, NIGHT, POLAR_RECHECK, Phase, current_phase, night_factor
 
 NYC = Observer(latitude=40.7128, longitude=-74.0060)
 SVALBARD = Observer(latitude=78.2232, longitude=15.6267)
@@ -59,5 +59,41 @@ def test_polar_winter_is_night_with_recheck():
     assert phase.until == now + POLAR_RECHECK
 
 
+def test_phase_brackets_now():
+    now = utc(2026, 7, 7, 12, 0)
+    phase = current_phase(now, NYC)
+    assert phase.since <= now < phase.until
+
+
 def test_phase_is_hashable_value_object():
-    assert Phase(DAY, utc(2026, 1, 1)) == Phase(DAY, utc(2026, 1, 1))
+    a = Phase(DAY, utc(2026, 1, 1), utc(2026, 1, 2))
+    assert a == Phase(DAY, utc(2026, 1, 1), utc(2026, 1, 2))
+
+
+RAMP = timedelta(minutes=40)
+
+
+def _phase(kind, since):
+    return Phase(kind, since, since + timedelta(hours=10))
+
+
+def test_factor_flat_day_and_night():
+    since = utc(2026, 7, 7, 0, 0)
+    late = since + timedelta(hours=5)  # far past the ramp window
+    assert night_factor(late, _phase(DAY, since), RAMP) == 0.0
+    assert night_factor(late, _phase(NIGHT, since), RAMP) == 1.0
+
+
+def test_factor_ramps_after_sunset_and_sunrise():
+    since = utc(2026, 7, 7, 0, 0)
+    halfway = since + RAMP / 2
+    assert night_factor(halfway, _phase(NIGHT, since), RAMP) == 0.5
+    assert night_factor(halfway, _phase(DAY, since), RAMP) == 0.5
+    assert night_factor(since, _phase(NIGHT, since), RAMP) == 0.0
+    assert night_factor(since + RAMP, _phase(NIGHT, since), RAMP) == 1.0
+
+
+def test_factor_zero_ramp_is_binary():
+    since = utc(2026, 7, 7, 0, 0)
+    assert night_factor(since, _phase(NIGHT, since), timedelta(0)) == 1.0
+    assert night_factor(since, _phase(DAY, since), timedelta(0)) == 0.0

@@ -24,6 +24,7 @@ POLAR_RECHECK = timedelta(hours=6)
 @dataclass(frozen=True)
 class Phase:
     kind: str        # DAY or NIGHT
+    since: datetime  # transition that started this phase (UTC)
     until: datetime  # next transition (UTC); doubles as the phase's identity
 
 
@@ -50,10 +51,25 @@ def current_phase(now: datetime, observer: Observer) -> Phase:
     future = [e for e in events if e[0] > now]
     if not past and not future:
         kind = DAY if elevation(observer, now) > 0 else NIGHT
-        return Phase(kind, now + POLAR_RECHECK)
+        return Phase(kind, now - POLAR_RECHECK, now + POLAR_RECHECK)
     if past:
-        kind = past[-1][1]
+        kind, since = past[-1][1], past[-1][0]
     else:  # window edge: infer from what the next transition switches TO
         kind = NIGHT if future[0][1] == DAY else DAY
+        since = now - POLAR_RECHECK
     until = future[0][0] if future else now + POLAR_RECHECK
-    return Phase(kind, until)
+    return Phase(kind, since, until)
+
+
+def night_factor(now: datetime, phase: Phase, ramp: timedelta) -> float:
+    """How far into "night" we are, 0.0 (full day) .. 1.0 (full night).
+
+    Ramps linearly over `ramp` after each transition: sunset starts a climb
+    from 0 to 1, sunrise a descent back. Beyond the ramp window the factor is
+    flat, so consumers quantizing it write nothing for the rest of the phase
+    — which is what lets a manual override stick outside the ramp windows.
+    """
+    if ramp <= timedelta(0):
+        return 1.0 if phase.kind == NIGHT else 0.0
+    progress = min(1.0, max(0.0, (now - phase.since) / ramp))
+    return progress if phase.kind == NIGHT else 1.0 - progress
