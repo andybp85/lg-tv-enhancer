@@ -14,6 +14,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import sys
+import time
 from dataclasses import dataclass
 from typing import Awaitable, Callable, Mapping
 
@@ -86,3 +88,107 @@ def wire(keeper: Keeper, client, *, clock: Callable[[], float],
         keeper.on_app_change(clock())
 
     return on_pic, on_app
+
+
+CONNECT_TIMEOUT = 15.0
+DISCONNECT_TIMEOUT = 5.0
+HEARTBEAT_SECS = 30.0
+RECONNECT_BACKOFF = 5.0
+PING_INTERVAL = 30.0
+
+
+async def _make_client(host: str, key: str | None):
+    from bscpylgtv import WebOsClient  # lazy: tests run without the package
+    return await WebOsClient.create(host, client_key=key, states=[],
+                                    ping_interval=PING_INTERVAL)
+
+
+async def serve(cfg: Config, *, client_factory=_make_client,
+                clock: Callable[[], float] = time.monotonic,
+                sleep=asyncio.sleep) -> None:
+    """One connection lifetime. Raises when the connection dies (heartbeat
+    timeout / subscription error); the caller reconnects."""
+    keeper = build_keeper(cfg)
+    client = await asyncio.wait_for(client_factory(cfg.host, cfg.key), CONNECT_TIMEOUT)
+    try:
+        await asyncio.wait_for(client.connect(), CONNECT_TIMEOUT)
+        on_pic, on_app = wire(keeper, client, clock=clock)
+        # Picture first: its immediate on-subscribe push seeds the current preset
+        # before any app-change event can arm a window.
+        await asyncio.wait_for(client.subscribe_picture_settings(on_pic), REQUEST_TIMEOUT)
+        await asyncio.wait_for(client.subscribe_current_app(on_app), REQUEST_TIMEOUT)
+        log.info("preset keeper connected to %s", cfg.host)
+        while True:
+            await sleep(HEARTBEAT_SECS)
+            # Liveness probe: a dead TV drops TCP without closing it, so an
+            # unguarded call would hang. The timeout turns that into a reconnect.
+            await asyncio.wait_for(client.get_current_app(), REQUEST_TIMEOUT)
+    finally:
+        try:
+            await asyncio.wait_for(client.disconnect(), DISCONNECT_TIMEOUT)
+        except Exception:
+            pass
+
+
+async def run(cfg: Config, *, serve=serve, sleep=asyncio.sleep) -> None:
+    failing = False
+    while True:
+        try:
+            await serve(cfg)
+            failing = False
+        except Exception as exc:  # noqa: BLE001 - any failure means reconnect
+            if not failing:
+                log.warning("preset keeper connection lost (%s: %s); "
+                            "reconnecting every %.0fs", type(exc).__name__, exc,
+                            RECONNECT_BACKOFF)
+                failing = True
+        await sleep(RECONNECT_BACKOFF)
+
+
+async def listen(cfg: Config, *, seconds: float = 120.0, client_factory=_make_client) -> None:
+    """Calibration: print each picture fingerprint and its classification.
+
+    Flip through your presets (incl. a Dolby Vision title) and read off the
+    tuples for LGTV_PRESET_BRIGHT / LGTV_PRESET_DARK. No writes.
+    """
+    from preset import classify, fingerprint_of
+
+    client = await asyncio.wait_for(client_factory(cfg.host, cfg.key), CONNECT_TIMEOUT)
+    await asyncio.wait_for(client.connect(), CONNECT_TIMEOUT)
+
+    async def on_pic(settings: Mapping[str, object]) -> None:
+        fp = fingerprint_of(settings)
+        preset = classify(settings, bright=cfg.bright_fp, dark=cfg.dark_fp)
+        print(f"fingerprint {fp} -> {preset}")
+
+    try:
+        await client.subscribe_picture_settings(on_pic)
+        print(f"listening {seconds:.0f}s — flip your presets now")
+        await asyncio.sleep(seconds)
+    finally:
+        try:
+            await asyncio.wait_for(client.disconnect(), DISCONNECT_TIMEOUT)
+        except Exception:
+            pass
+
+
+def main() -> None:
+    logging.basicConfig(
+        level=os.environ.get("LOG_LEVEL", "INFO"),
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+        stream=sys.stdout,
+    )
+    cfg = load_config()
+    if "--listen" in sys.argv:
+        asyncio.run(listen(cfg))
+        return
+    log.info("preset keeper watching %s (bright=%s dark=%s, settle %.0fs)",
+             cfg.host, cfg.bright_mode, cfg.dark_mode, cfg.settle_secs)
+    try:
+        asyncio.run(run(cfg))
+    except KeyboardInterrupt:
+        pass
+
+
+if __name__ == "__main__":
+    main()

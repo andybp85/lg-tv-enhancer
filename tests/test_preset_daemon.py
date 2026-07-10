@@ -99,3 +99,32 @@ def test_wire_leaves_dolby_vision_alone():
         assert client.set_calls == []
 
     asyncio.run(scenario())
+
+
+from preset_daemon import run
+
+
+class StopLoop(Exception):
+    pass
+
+
+def test_run_reconnects_after_serve_failure():
+    async def scenario():
+        attempts = []
+
+        async def flaky_serve(cfg):
+            attempts.append(1)
+            raise ConnectionResetError("connection dropped")
+
+        ticks = [0]
+
+        async def sleep(secs):
+            ticks[0] += 1
+            if ticks[0] >= 3:
+                raise StopLoop
+
+        with pytest.raises(StopLoop):
+            await run(CFG, serve=flaky_serve, sleep=sleep)
+        assert len(attempts) == 3  # serve retried each time the backoff elapsed
+
+    asyncio.run(scenario())
