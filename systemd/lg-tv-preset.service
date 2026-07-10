@@ -1,0 +1,22 @@
+[Unit]
+Description=LG TV ISF preset keeper (hold Bright/Dark across app/input switches)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Adjust user/paths to your Pi account before installing.
+User=pi
+WorkingDirectory=/home/pi/lg-tv-enhancer
+ExecStart=/home/pi/lg-tv-enhancer/venv/bin/python src/preset_daemon.py
+Restart=on-failure
+RestartSec=5
+Environment=LOG_LEVEL=INFO
+Environment=PYTHONUNBUFFERED=1
+# Shares the eye-comfort daemon's config file (same TV, same pairing key). The
+# preset vars (LGTV_PRESET_BRIGHT/DARK, LGTV_MODE_*, LGTV_SETTLE_SECS) are
+# optional and default to the calibrated C9 values. See the env example.
+EnvironmentFile=-/etc/default/lg-tv-enhancer
+
+[Install]
+WantedBy=multi-user.target

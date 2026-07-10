@@ -29,10 +29,38 @@ That shape buys the behaviors that matter:
 
 ```
 src/
-├── main.py   # reconcile loop + env config
-├── sun.py    # pure day/night phase computation (astral)
-└── tv.py     # eyeComfortMode get/set via bscpylgtv, timeout-guarded
+├── main.py          # eye-comfort reconcile loop + env config
+├── sun.py           # pure day/night phase computation (astral)
+├── tv.py            # eyeComfortMode get/set via bscpylgtv, timeout-guarded
+├── preset.py        # pure ISF preset classification + Keeper state machine
+└── preset_daemon.py # ISF preset keeper: subscribe to app + picture, correct
 ```
+
+## ISF preset keeper (second daemon)
+
+The C9 remembers the last picture mode **per app/input**, but ISF Bright/Dark is
+really a *global* choice (room light), not a per-app one. `preset_daemon.py`
+holds a persistent webOS connection and, when an app/input switch flips you to
+the other ISF variant, writes `pictureMode` back to the one you were on.
+
+- `pictureMode` is **unreadable** on this firmware (same whitelist refusal as
+  `eyeComfortMode`), so presets are recognized by their picture-settings
+  **fingerprint** `(contrast, backlight, brightness)`, pushed over
+  `subscribe_picture_settings`. Corrections are blind `pictureMode` writes.
+- **Unknown fingerprint → hands off.** Dolby Vision, Cinema, Game, and any
+  customized preset are left alone — no enumeration needed. (Sampled DV
+  `(90,90,60)` sits one brightness point from Bright `(90,90,65)`, which is why
+  matching uses the full triple.)
+- **Manual Bright↔Dark** (no app switch) is respected and becomes the new
+  sticky value.
+
+Calibrate or re-derive fingerprints (prints each mode's tuple as you flip):
+
+```bash
+venv/bin/python src/preset_daemon.py --listen
+```
+
+Config lives in the same env file as the eye-comfort daemon; see the table below.
 
 ## Configuration
 
@@ -45,6 +73,9 @@ Env-only (12-factor). Required: `LGTV_HOST`, `LGTV_LAT`, `LGTV_LON`.
 | `LGTV_LAT` / `LGTV_LON` | *(required)* | location for sunset/sunrise |
 | `LGTV_POLL_SECS` | `60` | retry cadence while unreachable/pending |
 | `LOG_LEVEL` | `INFO` | stdout log level (journald) |
+| `LGTV_PRESET_BRIGHT` / `LGTV_PRESET_DARK` | `90,90,65` / `85,10,50` | ISF preset fingerprints `contrast,backlight,brightness` |
+| `LGTV_MODE_BRIGHT` / `LGTV_MODE_DARK` | `expert1` / `expert2` | pictureMode written to restore each preset |
+| `LGTV_SETTLE_SECS` | `3` | app-change → mode-settle window |
 
 **Pin the pairing key.** `bscpylgtv` saves its key after pairing but never
 reads it back, so an unset `LGTV_KEY` makes the TV show the pairing prompt on
@@ -70,6 +101,15 @@ sudo cp systemd/lg-tv-enhancer.service /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now lg-tv-enhancer
 journalctl -u lg-tv-enhancer -f
+```
+
+The preset keeper is a second unit installed the same way:
+
+```bash
+sudo cp systemd/lg-tv-preset.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now lg-tv-preset
+journalctl -u lg-tv-preset -f
 ```
 
 ## Development
