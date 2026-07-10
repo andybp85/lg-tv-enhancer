@@ -52,6 +52,8 @@ log = logging.getLogger("lg-tv-preset")
 REQUEST_TIMEOUT = 10.0
 
 Callback = Callable[..., Awaitable[None]]
+ClientFactory = Callable[[str, str | None], Awaitable[object]]
+Sleep = Callable[[float], Awaitable[None]]
 
 
 def build_keeper(cfg: Config) -> Keeper:
@@ -97,15 +99,23 @@ RECONNECT_BACKOFF = 5.0
 PING_INTERVAL = 30.0
 
 
-async def _make_client(host: str, key: str | None):
+async def _make_client(host: str, key: str | None) -> object:
     from bscpylgtv import WebOsClient  # lazy: tests run without the package
     return await WebOsClient.create(host, client_key=key, states=[],
                                     ping_interval=PING_INTERVAL)
 
 
-async def serve(cfg: Config, *, client_factory=_make_client,
+async def _safe_disconnect(client) -> None:
+    """Best-effort disconnect; a dead connection must not mask the real error."""
+    try:
+        await asyncio.wait_for(client.disconnect(), DISCONNECT_TIMEOUT)
+    except Exception as exc:  # noqa: BLE001 - cleanup only, log and move on
+        log.debug("disconnect failed (%s: %s)", type(exc).__name__, exc)
+
+
+async def serve(cfg: Config, *, client_factory: ClientFactory = _make_client,
                 clock: Callable[[], float] = time.monotonic,
-                sleep=asyncio.sleep) -> None:
+                sleep: Sleep = asyncio.sleep) -> None:
     """One connection lifetime. Raises when the connection dies (heartbeat
     timeout / subscription error); the caller reconnects."""
     keeper = build_keeper(cfg)
@@ -124,13 +134,10 @@ async def serve(cfg: Config, *, client_factory=_make_client,
             # unguarded call would hang. The timeout turns that into a reconnect.
             await asyncio.wait_for(client.get_current_app(), REQUEST_TIMEOUT)
     finally:
-        try:
-            await asyncio.wait_for(client.disconnect(), DISCONNECT_TIMEOUT)
-        except Exception:
-            pass
+        await _safe_disconnect(client)
 
 
-async def run(cfg: Config, *, serve=serve, sleep=asyncio.sleep) -> None:
+async def run(cfg: Config, *, serve: Callable[[Config], Awaitable[None]] = serve, sleep: Sleep = asyncio.sleep) -> None:
     failing = False
     while True:
         try:
@@ -145,7 +152,7 @@ async def run(cfg: Config, *, serve=serve, sleep=asyncio.sleep) -> None:
         await sleep(RECONNECT_BACKOFF)
 
 
-async def listen(cfg: Config, *, seconds: float = 120.0, client_factory=_make_client) -> None:
+async def listen(cfg: Config, *, seconds: float = 120.0, client_factory: ClientFactory = _make_client) -> None:
     """Calibration: print each picture fingerprint and its classification.
 
     Flip through your presets (incl. a Dolby Vision title) and read off the
@@ -162,14 +169,11 @@ async def listen(cfg: Config, *, seconds: float = 120.0, client_factory=_make_cl
         print(f"fingerprint {fp} -> {preset}")
 
     try:
-        await client.subscribe_picture_settings(on_pic)
+        await asyncio.wait_for(client.subscribe_picture_settings(on_pic), REQUEST_TIMEOUT)
         print(f"listening {seconds:.0f}s — flip your presets now")
         await asyncio.sleep(seconds)
     finally:
-        try:
-            await asyncio.wait_for(client.disconnect(), DISCONNECT_TIMEOUT)
-        except Exception:
-            pass
+        await _safe_disconnect(client)
 
 
 def main() -> None:
