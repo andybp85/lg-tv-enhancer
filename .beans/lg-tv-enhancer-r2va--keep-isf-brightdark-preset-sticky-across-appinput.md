@@ -1,11 +1,11 @@
 ---
 # lg-tv-enhancer-r2va
 title: Keep ISF Bright/Dark preset sticky across app/input switches
-status: in-progress
+status: completed
 type: feature
 priority: normal
 created_at: 2026-07-10T10:21:06Z
-updated_at: 2026-07-10T12:46:16Z
+updated_at: 2026-07-10T13:37:31Z
 ---
 
 The C9 remembers the last picture mode per app/input. User uses ISF Expert Bright/Dark presets globally (chosen by room light), not per-app. On app/input switch the TV clobbers the mode to that app's remembered ISF variant. Desired: if we were on an ISF preset before the switch and the TV switches it to the *other* ISF variant, switch it back to what we were on. If the pre-switch mode was Dolby Vision (or the new content forces DV), leave the TV's choice alone.
@@ -31,3 +31,16 @@ Differs from Bright (90,90,65) **only in brightness**. Validates two decisions:
 - Exact full-triple match required — a backlight-only/contrast+backlight match would misread DV as Bright and fight Dolby Vision.
 - Brightness is load-bearing (sole DV-vs-Bright separator).
 DV -> unknown -> hands off, as designed. One DV mode sampled; --listen + unknown-logging catch any other.
+
+## Summary of Changes
+
+Shipped a second daemon (merged to main as 94ac4cc) that keeps the ISF Bright/Dark preset sticky across app/input switches.
+
+- `src/preset.py` (pure): fingerprint parsing, `classify()` (exact (contrast,backlight,brightness) triple → BRIGHT/DARK/UNKNOWN), and the `Keeper` state machine.
+- `src/preset_daemon.py`: env config, callback wiring (reentrancy-safe scheduled writes with task retention), persistent connect/subscribe/reconnect loop (timeout-guarded, seeds current preset on connect), and a `--listen` calibration mode.
+- `systemd/lg-tv-preset.service`, env-template additions, README section.
+- Tests: `tests/test_preset.py` + `tests/test_preset_daemon.py` (43 total incl. eye-comfort suite).
+
+Behavior: on an app/input switch that flips the ISF variant, blind-write pictureMode back to the pre-switch variant. Unknown fingerprint = hands off (Dolby Vision safe, both directions). Manual Bright↔Dark (no app switch) becomes the new sticky value.
+
+Built via subagent-driven development (6 TDD tasks + 2 review-fix passes); final whole-branch review clean. Verified read/write/subscribe against the live C9 during design (pictureMode write-only; presets via slider fingerprint).

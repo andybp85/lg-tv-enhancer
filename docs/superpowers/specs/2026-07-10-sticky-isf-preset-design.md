@@ -168,3 +168,27 @@ Writing `pictureMode` might reset the preset's stored `eyeComfortMode`, which th
 eye-comfort daemon only asserts once per solar phase. If observed in practice, revisit
 whether the preset write should also re-assert the desired eye-comfort state. Not
 addressed now (unverified, likely independent settings).
+
+## Post-implementation note (field discovery, 2026-07-10)
+
+Two realities surfaced during live verification on the Pi that this design's
+single-fingerprint model did not anticipate. Both are now handled (bean
+`lg-tv-enhancer-o6hk`, commit `13a74c4`):
+
+- **Picture settings are stored per input.** ISF Bright/Dark read different slider
+  values on an HDMI/cable input than on the built-in apps — e.g. the Xfinity input's
+  Bright is `(90, 100, 60)` and Dark is `(85, 28, 50)`, vs the apps' `(90, 90, 65)` /
+  `(85, 10, 50)`. A single fingerprint per preset can't recognize both, so switches
+  involving that input read as `unknown` and were (correctly, per the rule) left alone.
+  Fix: each preset now matches a **set** of fingerprints; `LGTV_PRESET_BRIGHT`/`DARK`
+  accept `;`-separated tuples, one per input. All four tuples plus DV `(90,90,60)`
+  remain mutually distinct, so exact-set matching preserves the DV hands-off guarantee.
+- **Energy Saving must be off.** The C9's Energy Saving / OLED-Light auto-dimming moves
+  `backlight` dynamically, so the fingerprint won't hold still. Disabling it (also the
+  right setting for calibrated ISF modes) makes the tuples stable. Documented in the
+  README and env template.
+
+The "apps vs inputs" distinction was a red herring: inputs fire the same
+`subscribe_current_app` event as apps and run the identical code path. The real issue
+was per-input *calibration*, not the app/input boundary. Verified end-to-end: corrections
+fire on real app↔input switches in both directions (`restored pictureMode=expert1/2`).
