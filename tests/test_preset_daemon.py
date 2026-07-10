@@ -128,3 +128,37 @@ def test_run_reconnects_after_serve_failure():
         assert len(attempts) == 3  # serve retried each time the backoff elapsed
 
     asyncio.run(scenario())
+
+
+def test_wire_schedules_write_without_awaiting_it():
+    # Guards the reentrancy invariant: the corrective write must be SCHEDULED
+    # via spawn, never awaited inline (awaiting inside a subscription callback
+    # deadlocks the real client's consumer loop). A spy spawn captures the
+    # coroutine without running it, so we can prove on_pic returned first.
+    async def scenario():
+        client = FakeClient()
+        keeper = build_keeper(CFG)
+        t = [0.0]
+        scheduled = []
+
+        def spy_spawn(coro):
+            scheduled.append(coro)  # capture but do NOT schedule/run
+            return coro
+
+        on_pic, on_app = wire(keeper, client, clock=lambda: t[0], spawn=spy_spawn)
+        await on_pic(_bright())
+        t[0] = 10.0
+        await on_app("netflix")
+        t[0] = 10.5
+        await on_pic(_dark())
+        assert len(scheduled) == 1        # a write was scheduled
+        assert client.set_calls == []     # but NOT run inline -> proves spawn, not await
+        await scheduled[0]                 # run the captured coroutine now
+        assert client.set_calls == [{"pictureMode": "expert1"}]
+
+    asyncio.run(scenario())
+
+
+def test_load_config_rejects_malformed_fingerprint():
+    with pytest.raises(SystemExit):
+        load_config(env={"LGTV_HOST": "tv", "LGTV_PRESET_BRIGHT": "oops"})

@@ -36,15 +36,18 @@ class Config:
 def load_config(env: Mapping[str, str] = os.environ) -> Config:
     if not env.get("LGTV_HOST"):
         raise SystemExit("missing required environment: LGTV_HOST")
-    return Config(
-        host=env["LGTV_HOST"],
-        key=env.get("LGTV_KEY") or None,
-        bright_fp=parse_fingerprint(env.get("LGTV_PRESET_BRIGHT", "90,90,65")),
-        dark_fp=parse_fingerprint(env.get("LGTV_PRESET_DARK", "85,10,50")),
-        bright_mode=env.get("LGTV_MODE_BRIGHT", "expert1"),
-        dark_mode=env.get("LGTV_MODE_DARK", "expert2"),
-        settle_secs=float(env.get("LGTV_SETTLE_SECS", "3")),
-    )
+    try:
+        return Config(
+            host=env["LGTV_HOST"],
+            key=env.get("LGTV_KEY") or None,
+            bright_fp=parse_fingerprint(env.get("LGTV_PRESET_BRIGHT", "90,90,65")),
+            dark_fp=parse_fingerprint(env.get("LGTV_PRESET_DARK", "85,10,50")),
+            bright_mode=env.get("LGTV_MODE_BRIGHT", "expert1"),
+            dark_mode=env.get("LGTV_MODE_DARK", "expert2"),
+            settle_secs=float(env.get("LGTV_SETTLE_SECS", "3")),
+        )
+    except ValueError as exc:
+        raise SystemExit(f"invalid preset config: {exc}")
 
 
 log = logging.getLogger("lg-tv-preset")
@@ -54,6 +57,18 @@ REQUEST_TIMEOUT = 10.0
 Callback = Callable[..., Awaitable[None]]
 ClientFactory = Callable[[str, str | None], Awaitable[object]]
 Sleep = Callable[[float], Awaitable[None]]
+
+# asyncio keeps only a weak reference to a bare create_task() result, so a
+# fire-and-forget task can be garbage-collected before it finishes (dropping
+# the correction). Hold a strong ref until the task completes.
+_pending_writes: set[asyncio.Task[None]] = set()
+
+
+def _spawn_tracked(coro: Awaitable[None]) -> asyncio.Task[None]:
+    task = asyncio.create_task(coro)
+    _pending_writes.add(task)
+    task.add_done_callback(_pending_writes.discard)
+    return task
 
 
 def build_keeper(cfg: Config) -> Keeper:
@@ -74,7 +89,7 @@ async def _guarded_write(client, mode: str) -> None:
 
 
 def wire(keeper: Keeper, client, *, clock: Callable[[], float],
-         spawn: Callable[[Awaitable[None]], object] = asyncio.create_task) -> tuple[Callback, Callback]:
+         spawn: Callable[[Awaitable[None]], object] = _spawn_tracked) -> tuple[Callback, Callback]:
     """Build the (on_pic, on_app) subscription callbacks around a Keeper.
 
     The write is scheduled via `spawn` rather than awaited: awaiting a request
@@ -126,6 +141,9 @@ async def serve(cfg: Config, *, client_factory: ClientFactory = _make_client,
         # Picture first: its immediate on-subscribe push seeds the current preset
         # before any app-change event can arm a window.
         await asyncio.wait_for(client.subscribe_picture_settings(on_pic), REQUEST_TIMEOUT)
+        # The immediate current-app push on subscribe arms a settle window here;
+        # harmless in steady state (no picture event follows, so it expires as
+        # "manual"). Picture is subscribed first above so _current is seeded.
         await asyncio.wait_for(client.subscribe_current_app(on_app), REQUEST_TIMEOUT)
         log.info("preset keeper connected to %s", cfg.host)
         while True:
