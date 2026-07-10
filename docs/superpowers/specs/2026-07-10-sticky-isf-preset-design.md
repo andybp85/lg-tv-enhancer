@@ -48,10 +48,18 @@ Because `pictureMode` is invisible by name, presets are identified by their slid
 |---|---|---|---|---|
 | `expert1` | ISF Expert Bright Room | 90 | 90 | 65 |
 | `expert2` | ISF Expert Dark Room | 85 | 10 | 50 |
+| *(Dolby Vision)* | Dolby Vision (Disney+ default) | 90 | 90 | **60** |
 
-The `backlight 90` vs `10` gap is a strong separator. **Any fingerprint that matches
-neither is `unknown`** — and `unknown = hands off`. This is what makes Dolby Vision,
-Cinema, Game, and any customized preset safe *without* enumerating them.
+**Any fingerprint that matches neither ISF tuple is `unknown`** — and `unknown = hands
+off`. This is what makes Dolby Vision, Cinema, Game, and any customized preset safe
+*without* enumerating them.
+
+**Matching must use the full `(contrast, backlight, brightness)` triple — matching on a
+subset would be a bug.** The sampled DV fingerprint `(90, 90, 60)` differs from Bright
+`(90, 90, 65)` **only in brightness**; contrast and backlight are identical. A
+backlight-only or contrast+backlight match would misread DV as Bright and the daemon
+would fight Dolby Vision. Brightness is load-bearing here. Exact-triple match classifies
+DV as `unknown` → hands off, as intended.
 
 ## Strategy
 
@@ -146,11 +154,13 @@ in journald for review and easy config updates via `--listen`.
   - string-typed slider values classify correctly.
 - `preset_daemon.py` — light, with a fake client (mirrors how `main.py` injects `apply`).
 
-## Open item (non-blocking)
+## DV collision check (done)
 
-Verify no DV/Cinema fingerprint collides with `(90,90,65)` or `(85,10,50)`. The
-`--listen` mode covers this: flip through modes incl. a real DV title, confirm distinct
-fingerprints. Until then, exact-match + unknown-logging keeps behavior safe.
+Verified against a live Dolby Vision title (Disney+). DV sampled at `(90, 90, 60)` —
+distinct from both ISF tuples, so exact-match classifies it `unknown` (hands off). One
+DV mode was sampled; the margin from Bright is a single brightness point (60 vs 65). The
+`--listen` mode + unknown-fingerprint logging remain the way to catch any other DV
+mode/title that might collide, but no collision exists for the modes tested.
 
 ## Possible interaction to watch
 
