@@ -7,10 +7,11 @@ from preset import (
     classify,
     fingerprint_of,
     parse_fingerprint,
+    parse_fingerprints,
 )
 
-BRIGHT_FP = (90, 90, 65)
-DARK_FP = (85, 10, 50)
+BRIGHT_FPS = frozenset({(90, 90, 65)})
+DARK_FPS = frozenset({(85, 10, 50)})
 
 
 def bright_settings() -> dict[str, object]:
@@ -26,6 +27,11 @@ def dv_settings() -> dict[str, object]:
     return {"contrast": 90, "backlight": 90, "brightness": 60, "color": "50"}
 
 
+def xfinity_bright_settings() -> dict[str, object]:
+    # Same preset, different per-input calibration than the apps (backlight 100).
+    return {"contrast": 90, "backlight": 100, "brightness": 60, "color": "50"}
+
+
 def test_parse_fingerprint():
     assert parse_fingerprint("90,90,65") == (90, 90, 65)
     assert parse_fingerprint(" 85, 10 ,50 ") == (85, 10, 50)
@@ -34,6 +40,12 @@ def test_parse_fingerprint():
 def test_parse_fingerprint_rejects_wrong_arity():
     with pytest.raises(ValueError):
         parse_fingerprint("90,90")
+
+
+def test_parse_fingerprints_single_and_multi():
+    assert parse_fingerprints("90,90,65") == frozenset({(90, 90, 65)})
+    assert parse_fingerprints("90,90,65;90,100,60") == frozenset(
+        {(90, 90, 65), (90, 100, 60)})
 
 
 def test_fingerprint_of_casts_mixed_types():
@@ -45,23 +57,32 @@ def test_fingerprint_of_missing_key_returns_none():
 
 
 def test_classify_bright():
-    assert classify(bright_settings(), bright=BRIGHT_FP, dark=DARK_FP) == BRIGHT
+    assert classify(bright_settings(), bright=BRIGHT_FPS, dark=DARK_FPS) == BRIGHT
 
 
 def test_classify_dark_with_string_values():
-    assert classify(dark_settings(), bright=BRIGHT_FP, dark=DARK_FP) == DARK
+    assert classify(dark_settings(), bright=BRIGHT_FPS, dark=DARK_FPS) == DARK
 
 
 def test_classify_dolby_vision_is_unknown():
     # DV (90,90,60) differs from Bright (90,90,65) only in brightness.
-    assert classify(dv_settings(), bright=BRIGHT_FP, dark=DARK_FP) == UNKNOWN
+    assert classify(dv_settings(), bright=BRIGHT_FPS, dark=DARK_FPS) == UNKNOWN
+
+
+def test_classify_matches_any_fingerprint_in_the_set():
+    # Per-input calibration: an app Bright and the Xfinity Bright are both bright.
+    bright = frozenset({(90, 90, 65), (90, 100, 60)})
+    assert classify(bright_settings(), bright=bright, dark=DARK_FPS) == BRIGHT
+    assert classify(xfinity_bright_settings(), bright=bright, dark=DARK_FPS) == BRIGHT
+    # And a set-member Xfinity Bright must not be mistaken for DV (90,90,60).
+    assert classify(dv_settings(), bright=bright, dark=DARK_FPS) == UNKNOWN
 
 
 from preset import Correction, Keeper
 
 
 def make_keeper() -> Keeper:
-    return Keeper(bright_fp=BRIGHT_FP, dark_fp=DARK_FP,
+    return Keeper(bright_fps=BRIGHT_FPS, dark_fps=DARK_FPS,
                   bright_mode="expert1", dark_mode="expert2", settle_secs=3.0)
 
 

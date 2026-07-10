@@ -11,8 +11,8 @@ def test_load_config_requires_host():
 def test_load_config_defaults():
     cfg = load_config(env={"LGTV_HOST": "tv"})
     assert cfg.key is None
-    assert cfg.bright_fp == (90, 90, 65)
-    assert cfg.dark_fp == (85, 10, 50)
+    assert cfg.bright_fps == frozenset({(90, 90, 65)})
+    assert cfg.dark_fps == frozenset({(85, 10, 50)})
     assert cfg.bright_mode == "expert1"
     assert cfg.dark_mode == "expert2"
     assert cfg.settle_secs == 3.0
@@ -29,10 +29,21 @@ def test_load_config_custom_fingerprints_and_modes():
         "LGTV_SETTLE_SECS": "5",
     })
     assert cfg.key == "abc"
-    assert cfg.bright_fp == (88, 92, 66)
-    assert cfg.dark_fp == (80, 5, 48)
+    assert cfg.bright_fps == frozenset({(88, 92, 66)})
+    assert cfg.dark_fps == frozenset({(80, 5, 48)})
     assert cfg.bright_mode == "expert2"
     assert cfg.settle_secs == 5.0
+
+
+def test_load_config_multi_fingerprint_per_preset():
+    # Per-input calibration: apps + Xfinity Bright/Dark, ';'-separated.
+    cfg = load_config(env={
+        "LGTV_HOST": "tv",
+        "LGTV_PRESET_BRIGHT": "90,90,65;90,100,60",
+        "LGTV_PRESET_DARK": "85,10,50;85,28,50",
+    })
+    assert cfg.bright_fps == frozenset({(90, 90, 65), (90, 100, 60)})
+    assert cfg.dark_fps == frozenset({(85, 10, 50), (85, 28, 50)})
 
 
 import asyncio
@@ -51,7 +62,8 @@ class FakeClient:
         self.set_calls.append(settings)
 
 
-CFG = Config(host="tv", key="k", bright_fp=(90, 90, 65), dark_fp=(85, 10, 50),
+CFG = Config(host="tv", key="k", bright_fps=frozenset({(90, 90, 65)}),
+             dark_fps=frozenset({(85, 10, 50)}),
              bright_mode="expert1", dark_mode="expert2", settle_secs=3.0)
 
 

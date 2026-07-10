@@ -27,6 +27,17 @@ def parse_fingerprint(csv: str) -> tuple[int, int, int]:
     return (parts[0], parts[1], parts[2])
 
 
+def parse_fingerprints(csv: str) -> frozenset[tuple[int, int, int]]:
+    """Parse one or more ';'-separated fingerprints into a set.
+
+    A preset needs several fingerprints because the C9 stores picture settings
+    *per input*: ISF Bright/Dark read different slider values on an HDMI input
+    than on the built-in apps (e.g. Bright is (90,90,65) on an app but
+    (90,100,60) on the cable box). Any of a preset's fingerprints identifies it.
+    """
+    return frozenset(parse_fingerprint(part) for part in csv.split(";"))
+
+
 def fingerprint_of(settings: Mapping[str, object]) -> tuple[int, int, int] | None:
     """(contrast, backlight, brightness) from a picture-settings event.
 
@@ -39,13 +50,19 @@ def fingerprint_of(settings: Mapping[str, object]) -> tuple[int, int, int] | Non
         return None
 
 
-def classify(settings: Mapping[str, object], *, bright: tuple[int, int, int],
-             dark: tuple[int, int, int]) -> str:
-    """BRIGHT / DARK / UNKNOWN by exact match on the full slider triple."""
+def classify(settings: Mapping[str, object], *,
+             bright: frozenset[tuple[int, int, int]],
+             dark: frozenset[tuple[int, int, int]]) -> str:
+    """BRIGHT / DARK / UNKNOWN by exact match against a preset's fingerprints.
+
+    Exact full-triple membership keeps the UNKNOWN=hands-off guarantee tight:
+    Dolby Vision (90,90,60) matches none of the ISF fingerprints even though it
+    sits one brightness point from an app's Bright (90,90,65).
+    """
     fp = fingerprint_of(settings)
-    if fp == bright:
+    if fp in bright:
         return BRIGHT
-    if fp == dark:
+    if fp in dark:
         return DARK
     return UNKNOWN
 
@@ -67,10 +84,11 @@ class Keeper:
     Vision, unknown presets, late events — updates the tracked preset only.
     """
 
-    def __init__(self, *, bright_fp: tuple[int, int, int], dark_fp: tuple[int, int, int],
+    def __init__(self, *, bright_fps: frozenset[tuple[int, int, int]],
+                 dark_fps: frozenset[tuple[int, int, int]],
                  bright_mode: str, dark_mode: str, settle_secs: float) -> None:
-        self._bright_fp = bright_fp
-        self._dark_fp = dark_fp
+        self._bright_fps = bright_fps
+        self._dark_fps = dark_fps
         self._mode = {BRIGHT: bright_mode, DARK: dark_mode}
         self._settle_secs = settle_secs
         self._current = UNKNOWN
@@ -82,7 +100,7 @@ class Keeper:
         self._deadline = now + self._settle_secs
 
     def on_picture_change(self, settings: Mapping[str, object], now: float) -> Correction | None:
-        after = classify(settings, bright=self._bright_fp, dark=self._dark_fp)
+        after = classify(settings, bright=self._bright_fps, dark=self._dark_fps)
         correction = None
         if self._before is not None:
             if now <= self._deadline:

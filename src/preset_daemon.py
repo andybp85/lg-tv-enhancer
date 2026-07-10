@@ -19,15 +19,15 @@ import time
 from dataclasses import dataclass
 from typing import Awaitable, Callable, Mapping
 
-from preset import Correction, Keeper, parse_fingerprint
+from preset import Correction, Keeper, parse_fingerprints
 
 
 @dataclass(frozen=True)
 class Config:
     host: str
     key: str | None
-    bright_fp: tuple[int, int, int]
-    dark_fp: tuple[int, int, int]
+    bright_fps: frozenset[tuple[int, int, int]]
+    dark_fps: frozenset[tuple[int, int, int]]
     bright_mode: str
     dark_mode: str
     settle_secs: float
@@ -40,8 +40,8 @@ def load_config(env: Mapping[str, str] = os.environ) -> Config:
         return Config(
             host=env["LGTV_HOST"],
             key=env.get("LGTV_KEY") or None,
-            bright_fp=parse_fingerprint(env.get("LGTV_PRESET_BRIGHT", "90,90,65")),
-            dark_fp=parse_fingerprint(env.get("LGTV_PRESET_DARK", "85,10,50")),
+            bright_fps=parse_fingerprints(env.get("LGTV_PRESET_BRIGHT", "90,90,65")),
+            dark_fps=parse_fingerprints(env.get("LGTV_PRESET_DARK", "85,10,50")),
             bright_mode=env.get("LGTV_MODE_BRIGHT", "expert1"),
             dark_mode=env.get("LGTV_MODE_DARK", "expert2"),
             settle_secs=float(env.get("LGTV_SETTLE_SECS", "3")),
@@ -72,7 +72,7 @@ def _spawn_tracked(coro: Awaitable[None]) -> asyncio.Task[None]:
 
 
 def build_keeper(cfg: Config) -> Keeper:
-    return Keeper(bright_fp=cfg.bright_fp, dark_fp=cfg.dark_fp,
+    return Keeper(bright_fps=cfg.bright_fps, dark_fps=cfg.dark_fps,
                   bright_mode=cfg.bright_mode, dark_mode=cfg.dark_mode,
                   settle_secs=cfg.settle_secs)
 
@@ -183,7 +183,7 @@ async def listen(cfg: Config, *, seconds: float = 120.0, client_factory: ClientF
 
     async def on_pic(settings: Mapping[str, object]) -> None:
         fp = fingerprint_of(settings)
-        preset = classify(settings, bright=cfg.bright_fp, dark=cfg.dark_fp)
+        preset = classify(settings, bright=cfg.bright_fps, dark=cfg.dark_fps)
         print(f"fingerprint {fp} -> {preset}")
 
     try:

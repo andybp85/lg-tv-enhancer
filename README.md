@@ -51,6 +51,10 @@ the other ISF variant, writes `pictureMode` back to the one you were on.
   customized preset are left alone — no enumeration needed. (Sampled DV
   `(90,90,60)` sits one brightness point from Bright `(90,90,65)`, which is why
   matching uses the full triple.)
+- **Per input.** The C9 stores picture settings per input, so ISF Bright/Dark
+  read different values on an HDMI/cable input than on the apps. Each preset
+  therefore accepts a **set** of fingerprints (`;`-separated in config); any one
+  identifies the preset.
 - **Manual Bright↔Dark** (no app switch) is respected and becomes the new
   sticky value.
 
@@ -59,6 +63,10 @@ Calibrate or re-derive fingerprints (prints each mode's tuple as you flip):
 ```bash
 venv/bin/python src/preset_daemon.py --listen
 ```
+
+Turn **off** Energy Saving / OLED-Light auto-dimming first — it moves `backlight`
+dynamically, so the fingerprint won't hold still (and it fights calibrated ISF
+modes anyway).
 
 Config lives in the same env file as the eye-comfort daemon; see the table below.
 
@@ -73,7 +81,7 @@ Env-only (12-factor). Required: `LGTV_HOST`, `LGTV_LAT`, `LGTV_LON`.
 | `LGTV_LAT` / `LGTV_LON` | *(required)* | location for sunset/sunrise |
 | `LGTV_POLL_SECS` | `60` | retry cadence while unreachable/pending |
 | `LOG_LEVEL` | `INFO` | stdout log level (journald) |
-| `LGTV_PRESET_BRIGHT` / `LGTV_PRESET_DARK` | `90,90,65` / `85,10,50` | ISF preset fingerprints `contrast,backlight,brightness` |
+| `LGTV_PRESET_BRIGHT` / `LGTV_PRESET_DARK` | `90,90,65` / `85,10,50` | ISF preset fingerprints `contrast,backlight,brightness`; `;`-separate one per input |
 | `LGTV_MODE_BRIGHT` / `LGTV_MODE_DARK` | `expert1` / `expert2` | pictureMode written to restore each preset |
 | `LGTV_SETTLE_SECS` | `3` | app-change → mode-settle window |
 
