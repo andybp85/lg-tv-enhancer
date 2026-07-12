@@ -76,7 +76,7 @@ Env-only (12-factor). Required: `LGTV_HOST`, `LGTV_LAT`, `LGTV_LON`.
 
 | Var | Default | Meaning |
 |---|---|---|
-| `LGTV_HOST` | *(required)* | LG TV's LAN IP |
+| `LGTV_HOST` | *(required)* | LG TV's hostname or LAN IP (prefer a DNS name that tracks its DHCP lease) |
 | `LGTV_KEY` | *(unset → interactive pairing)* | pinned webOS pairing key |
 | `LGTV_LAT` / `LGTV_LON` | *(required)* | location for sunset/sunrise |
 | `LGTV_POLL_SECS` | `60` | retry cadence while unreachable/pending |
