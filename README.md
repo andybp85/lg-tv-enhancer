@@ -120,6 +120,41 @@ sudo systemctl enable --now lg-tv-preset
 journalctl -u lg-tv-preset -f
 ```
 
+## Ambient light sensor (measurement stage)
+
+Groundwork for auto-driving the ISF preset from room brightness. The sensor is a BH1750FVI on the Pi's I2C bus —
+the C9's built-in light sensor is not exposed over the webOS LAN API, so the reading has to come from our own hardware.
+
+Wiring, module pin to Pi header pin:
+
+| BH1750 | Pi header | Signal |
+| --- | --- | --- |
+| 1 VCC | 1 | 3v3 — **not** 5V; the Pi's I2C lines are 3.3V-only |
+| 2 SCL | 5 | GPIO3 |
+| 3 DAT | 3 | GPIO2 |
+| 4 GND | 9 | ground |
+| 5 ADDR | — | floating or low = address `0x23` |
+
+Note the module silkscreens SCL before DAT, the reverse of the header's 3-then-5 order — easy to cross.
+Mount the sensor outside the enclosure facing the room, not the panel: inside a box it reads ~0 lux, and
+aimed at the TV it would feed the panel's own output back into the band selector.
+
+Enable the bus and confirm the sensor answers:
+
+```bash
+sudo raspi-config nonint do_i2c 0
+i2cdetect -y 1              # expect 23
+```
+
+Then log a full day/night cycle in the room, using the lights the way they're normally used:
+
+```bash
+venv/bin/python tools/log_lux.py --out lux.csv --interval 10
+```
+
+Band thresholds and hysteresis widths get chosen from that CSV. Picking them by guess is how the TV ends up
+hunting every time a cloud passes.
+
 ## Development
 
 Tests run anywhere — the webOS client is injected/faked, `astral` is pure math:
