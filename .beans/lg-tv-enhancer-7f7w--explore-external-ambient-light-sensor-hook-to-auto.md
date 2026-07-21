@@ -1,11 +1,11 @@
 ---
 # lg-tv-enhancer-7f7w
 title: 'Explore: external ambient-light-sensor hook to auto-drive ISF preset / picture brightness'
-status: in-progress
+status: completed
 type: feature
 priority: normal
 created_at: 2026-07-14T02:05:34Z
-updated_at: 2026-07-21T02:35:02Z
+updated_at: 2026-07-21T09:13:37Z
 ---
 
 Explore an external ambient-light-sensor hook that drives the TV's ISF preset (or picture brightness) automatically. The C9's built-in light sensor is **not** exposed over the webOS SSAP LAN API (bscpylgtv) — it only feeds the TV's internal Energy Saving / Eye Comfort features; no lux reading is readable or subscribable. So any light-adaptive behavior must come from an **external** sensor on the Pi, with the daemon reacting by pushing picture state to the TV.
@@ -52,7 +52,7 @@ Related to `lg-tv-enhancer-kzog` (circadian color-temperature ramp) — that's t
 - [x] Option A vs B → **Option A** (decided 2026-07-19): lux band picks ISF Bright vs Dark, the preset keeper enforces it. Single writer of `pictureMode`; manual Bright<->Dark is a temporary override until lux crosses a band.
 - [ ] Band thresholds (lux -> dark/dim/bright) and hysteresis widths — needs real measurement in the room
 - [x] Debounce hold time — **30s**. The band edge sits at 1–3 lux (bottom of range), where a drastic change is almost always a deliberate lamp switch (a sustained step), not a slow dusk ramp — so the debounce only rejects transients (shadow ~2s, headlight sweep a few s, phone glance ~10–30s). 30s covers those and keeps lamp-off near-instant. If a dark-room phone glance ever flips to Bright, escape hatch is an asymmetric hold (fast to Dark, slow to Bright).
-- [ ] Does this merge with, or run beside, the circadian-color-temp daemon?
+- [x] Does this merge with, or run beside, the circadian-color-temp daemon? → deferred to `lg-tv-enhancer-kzog` (different key — color temp vs pictureMode — so no conflict; whether they share a loop is that bean's call).
 
 ## Hardware (decided 2026-07-19)
 
@@ -104,3 +104,11 @@ Folded the lux hook into the preset keeper (single writer of pictureMode), all T
 Full suite 86 passed. Docs updated: README ambient-light section rewritten (hook, not just measurement), config table rows, env example.
 
 Remaining open: merge-vs-coexist with the circadian color-temp daemon (`lg-tv-enhancer-kzog`).
+
+## Summary of Changes
+
+Shipped Option A. The C9 built-in sensor stays unreadable over LAN; a BH1750FVI on the Pi I2C bus feeds the reading. Room brightness now auto-picks ISF Bright/Dark via a pure hysteresis+debounce band selector, folded into the preset keeper as the single writer of pictureMode. Off by default (`LGTV_LUX_SOURCE`). Manual overrides ride until the light next crosses a band; Dolby Vision is never clobbered.
+
+Landed across two commits (67a429c sensor+selector, 2c6ae4b wiring), merged to main as 0401c07. 86 tests pass. Verified running on the Pi (hook active, real I2C read path exercised, no read errors). Thresholds (dark<1.0/bright>3.0/hold 30s) measured behind the TV and are mount-specific.
+
+Follow-up (not blocking): state resets on TV reconnect (re-applies current band once, could momentarily stomp a manual override); circadian coexistence tracked under kzog.
