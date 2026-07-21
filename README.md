@@ -57,6 +57,8 @@ the other ISF variant, writes `pictureMode` back to the one you were on.
   identifies the preset.
 - **Manual Bright↔Dark** (no app switch) is respected and becomes the new
   sticky value.
+- **Optional ambient-light hook** folds into this daemon to pick Bright/Dark
+  from room brightness — see the ambient-light section below.
 
 Calibrate or re-derive fingerprints (prints each mode's tuple as you flip):
 
@@ -84,6 +86,12 @@ Env-only (12-factor). Required: `LGTV_HOST`, `LGTV_LAT`, `LGTV_LON`.
 | `LGTV_PRESET_BRIGHT` / `LGTV_PRESET_DARK` | `90,90,65` / `85,10,50` | ISF preset fingerprints `contrast,backlight,brightness`; `;`-separate one per input |
 | `LGTV_MODE_BRIGHT` / `LGTV_MODE_DARK` | `expert1` / `expert2` | pictureMode written to restore each preset |
 | `LGTV_SETTLE_SECS` | `3` | app-change → mode-settle window |
+| `LGTV_LUX_SOURCE` | `none` | ambient-light hook: `bh1750`, `file`, or `none` (off) |
+| `LGTV_LUX_ADDRESS` | `0x23` | BH1750 I2C address (`0x5C` if ADDR tied high) |
+| `LGTV_LUX_FILE` | *(unset)* | path the `file` source reads lux from |
+| `LGTV_LUX_DARK_BELOW` / `LGTV_LUX_BRIGHT_ABOVE` | `1.0` / `3.0` | band edges (lux); deadband between them holds current |
+| `LGTV_LUX_HOLD_SECS` | `30` | a new band must hold this long to commit |
+| `LGTV_LUX_POLL_SECS` | `30` | seconds between sensor reads |
 
 **Pin the pairing key.** `bscpylgtv` saves its key after pairing but never
 reads it back, so an unset `LGTV_KEY` makes the TV show the pairing prompt on
@@ -120,10 +128,21 @@ sudo systemctl enable --now lg-tv-preset
 journalctl -u lg-tv-preset -f
 ```
 
-## Ambient light sensor (measurement stage)
+## Ambient-light hook (auto ISF Bright/Dark)
 
-Groundwork for auto-driving the ISF preset from room brightness. The sensor is a BH1750FVI on the Pi's I2C bus —
-the C9's built-in light sensor is not exposed over the webOS LAN API, so the reading has to come from our own hardware.
+Room brightness auto-picks the ISF preset. The sensor is a BH1750FVI on the Pi's I2C bus — the C9's built-in
+light sensor is not exposed over the webOS LAN API, so the reading comes from our own hardware.
+
+This runs **inside the preset keeper** (`lg-tv-preset.service`), not as its own daemon: both write `pictureMode`,
+so folding in keeps a single writer and no fighting. Set `LGTV_LUX_SOURCE=bh1750` to enable it. The keeper reads
+lux, debounces it into a Bright/Dark band, and applies the preset only when the band *changes* — so a manual
+Bright/Dark you make rides until the light next crosses a band, and Dolby Vision (or any unrecognized preset) is
+left alone. Off by default.
+
+- **Hysteresis + debounce** keep it from hunting: overlapping band edges (`LGTV_LUX_DARK_BELOW` /
+  `LGTV_LUX_BRIGHT_ABOVE`) mean it must cross the *far* edge to flip, and a new band must hold `LGTV_LUX_HOLD_SECS`
+  before it commits — so a passing cloud or a phone glance doesn't retint the room.
+- **Thresholds are mount-specific.** The defaults were measured behind the TV; re-measure (below) if you move it.
 
 Wiring, module pin to Pi header pin:
 
@@ -146,14 +165,15 @@ sudo raspi-config nonint do_i2c 0
 i2cdetect -y 1              # expect 23
 ```
 
-Then log a full day/night cycle in the room, using the lights the way they're normally used:
+To (re)pick thresholds, log a full day/night cycle in the room with the lights used the way they normally are:
 
 ```bash
 venv/bin/python tools/log_lux.py --out lux.csv --interval 10
 ```
 
-Band thresholds and hysteresis widths get chosen from that CSV. Picking them by guess is how the TV ends up
-hunting every time a cloud passes.
+Choose the band edges from that CSV — pick a deadband that sits in a sparse gap between the room's lit and unlit
+readings. Guessing is how the TV ends up hunting every time a cloud passes. Then set `LGTV_LUX_DARK_BELOW` /
+`LGTV_LUX_BRIGHT_ABOVE` / `LGTV_LUX_HOLD_SECS` and restart `lg-tv-preset`.
 
 ## Development
 

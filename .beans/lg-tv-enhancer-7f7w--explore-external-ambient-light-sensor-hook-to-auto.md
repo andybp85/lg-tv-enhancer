@@ -5,7 +5,7 @@ status: in-progress
 type: feature
 priority: normal
 created_at: 2026-07-14T02:05:34Z
-updated_at: 2026-07-21T02:06:07Z
+updated_at: 2026-07-21T02:35:02Z
 ---
 
 Explore an external ambient-light-sensor hook that drives the TV's ISF preset (or picture brightness) automatically. The C9's built-in light sensor is **not** exposed over the webOS SSAP LAN API (bscpylgtv) — it only feeds the TV's internal Energy Saving / Eye Comfort features; no lux reading is readable or subscribable. So any light-adaptive behavior must come from an **external** sensor on the Pi, with the daemon reacting by pushing picture state to the TV.
@@ -92,3 +92,15 @@ Next: run the logger through a full day/night cycle in the room, then pick band 
 Thresholds are mount-specific — sensor is behind the TV. Moving it means re-measuring.
 
 Still open: wire `lux.py` + `bh1750.py` into a daemon that drives the preset keeper's target (Option A), and the merge-vs-coexist question with the circadian daemon (`lg-tv-enhancer-kzog`).
+
+## Daemon wiring landed (2026-07-20) — Option A wired
+
+Folded the lux hook into the preset keeper (single writer of pictureMode), all TDD, default-off via `LGTV_LUX_SOURCE`:
+
+- `src/luxsource.py` — `LuxSource` protocol + `BH1750Source` (blocking I2C read in `asyncio.to_thread`), `FileSource` (HA/MQTT bridge or tests), `make_source` env factory. `tests/test_luxsource.py` (9).
+- `src/preset.py` — `Keeper.set_desired(band)` returns the write needed, or None when already there / UNKNOWN (Dolby Vision stays hands-off, even for lux). Added `current` property. `tests/test_preset.py` +5.
+- `src/preset_daemon.py` — `poll_lux()` reconcile loop: reads lux, `select_band`, drives the keeper only on a committed band *change* (apply-once-per-band → manual override rides until the next crossing). Failed write / UNKNOWN preset deferred + retried; already-correct TV goes quiet. Spawned inside `serve()` on the same connection, torn down with it. Config gains `LGTV_LUX_*`. `tests/test_preset_daemon.py` +10 (startup, blip-ignore, hold-commit, already-on-band, DV-defer, DV-ends-applies, manual-override-rides, write-retry).
+
+Full suite 86 passed. Docs updated: README ambient-light section rewritten (hook, not just measurement), config table rows, env example.
+
+Remaining open: merge-vs-coexist with the circadian color-temp daemon (`lg-tv-enhancer-kzog`).

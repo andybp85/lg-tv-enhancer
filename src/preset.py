@@ -99,6 +99,23 @@ class Keeper:
         self._before = self._current
         self._deadline = now + self._settle_secs
 
+    @property
+    def current(self) -> str:
+        """The ISF preset the TV is believed to be on (BRIGHT/DARK/UNKNOWN)."""
+        return self._current
+
+    def set_desired(self, band: str) -> Correction | None:
+        """Ambient-lux input: request BRIGHT or DARK, returning the write needed
+        to get there, or None when already there or hands-off.
+
+        UNKNOWN stays hands-off (Dolby Vision and unrecognized presets are never
+        clobbered), so the caller drives this only on a committed band *change*
+        — the lux analogue of the sun loop's apply-once-per-phase.
+        """
+        if band == self._current or self._current == UNKNOWN:
+            return None
+        return Correction(mode=self._mode[band], to_preset=band)
+
     def on_picture_change(self, settings: Mapping[str, object], now: float) -> Correction | None:
         after = classify(settings, bright=self._bright_fps, dark=self._dark_fps)
         correction = None

@@ -150,3 +150,41 @@ def test_corrective_write_event_does_not_loop():
     assert k.on_picture_change(dark_settings(), now=10.5) is not None  # correction issued
     # The write flips the TV back to bright, producing this event; must be inert.
     assert k.on_picture_change(bright_settings(), now=10.6) is None
+
+
+def test_lux_desires_dark_from_bright_yields_correction():
+    k = make_keeper()
+    k.on_picture_change(bright_settings(), now=0.0)  # current = bright
+    assert k.set_desired(DARK) == Correction(mode="expert2", to_preset=DARK)
+
+
+def test_lux_desires_bright_from_dark_yields_correction():
+    k = make_keeper()
+    k.on_picture_change(dark_settings(), now=0.0)
+    assert k.set_desired(BRIGHT) == Correction(mode="expert1", to_preset=BRIGHT)
+
+
+def test_lux_desiring_current_band_is_a_noop():
+    # Already on the wanted preset (e.g. set by hand): no redundant blind-write.
+    k = make_keeper()
+    k.on_picture_change(dark_settings(), now=0.0)
+    assert k.set_desired(DARK) is None
+
+
+def test_lux_does_not_clobber_an_unknown_preset():
+    # Dolby Vision (or any unrecognized preset) is hands-off, even for lux —
+    # the room going dark must not force ISF over DV.
+    k = make_keeper()
+    k.on_picture_change(dv_settings(), now=0.0)  # current = UNKNOWN
+    assert k.set_desired(DARK) is None
+
+
+def test_lux_write_event_is_inert():
+    # The write lux triggers comes back as a picture event with no app window;
+    # it must just update tracked state, not cause a correction.
+    k = make_keeper()
+    k.on_picture_change(bright_settings(), now=0.0)
+    assert k.set_desired(DARK) is not None
+    assert k.on_picture_change(dark_settings(), now=1.0) is None
+    # And now Dark is the tracked preset, so lux wanting Dark is a no-op.
+    assert k.set_desired(DARK) is None
