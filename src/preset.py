@@ -18,6 +18,10 @@ UNKNOWN = "unknown"
 
 _KEYS = ("contrast", "backlight", "brightness")
 
+# "no app observed yet", distinct from an app id of None so a TV that reports a
+# null foreground app still gets a baseline rather than re-arming forever.
+_UNSEEN: object = object()
+
 
 def parse_fingerprint(csv: str) -> tuple[int, int, int]:
     """Parse a 'contrast,backlight,brightness' config value into a triple."""
@@ -94,8 +98,21 @@ class Keeper:
         self._current = UNKNOWN
         self._before: str | None = None   # preset snapshot at the last app change
         self._deadline = 0.0              # settle-window end (monotonic)
+        self._app: object = _UNSEEN       # last foreground app id seen
 
-    def on_app_change(self, now: float) -> None:
+    def on_app_change(self, app: object, now: float) -> None:
+        """Arm a settle window, but only for a genuine switch.
+
+        Subscribing to the current app delivers the foreground app immediately,
+        and that first push is a snapshot of what is already running, not a
+        switch. Arming on it would put a window around startup, where the lux
+        hook's first apply lands — and a write we asked for would come back
+        looking like an app-induced flip (lg-tv-enhancer-mtin). Re-emissions of
+        the same app id are inert for the same reason.
+        """
+        previous, self._app = self._app, app
+        if previous is _UNSEEN or app == previous:
+            return
         self._before = self._current
         self._deadline = now + self._settle_secs
 

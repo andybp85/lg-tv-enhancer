@@ -120,7 +120,7 @@ def wire(keeper: Keeper, client, *, clock: Callable[[], float],
             spawn(_guarded_write(client, correction.mode))
 
     async def on_app(app: object) -> None:
-        keeper.on_app_change(clock())
+        keeper.on_app_change(app, clock())
 
     return on_pic, on_app
 
@@ -213,9 +213,10 @@ async def serve(cfg: Config, *, source: LuxSource | None = None,
         # before any app-change event can arm a window — and before the lux task
         # can ask the keeper what's on.
         await asyncio.wait_for(client.subscribe_picture_settings(on_pic), REQUEST_TIMEOUT)
-        # The immediate current-app push on subscribe arms a settle window here;
-        # harmless in steady state (no picture event follows, so it expires as
-        # "manual"). Picture is subscribed first above so _current is seeded.
+        # The immediate current-app push is a snapshot, not a switch, so the
+        # keeper takes it as its app baseline without arming a settle window —
+        # otherwise the lux task's first apply below lands inside that window and
+        # comes back looking like an app-induced flip (lg-tv-enhancer-mtin).
         await asyncio.wait_for(client.subscribe_current_app(on_app), REQUEST_TIMEOUT)
         log.info("preset keeper connected to %s", cfg.host)
         if source is not None:

@@ -89,11 +89,36 @@ def test_wire_writes_pictureMode_on_app_flip():
         on_pic, on_app = wire(keeper, client, clock=lambda: t[0])
         await on_pic(_bright())          # seed current = bright
         t[0] = 10.0
+        await on_app("home")     # on-subscribe snapshot: baseline only
         await on_app("netflix")
         t[0] = 10.5
         await on_pic(_dark())            # TV flipped to dark -> correct
         await asyncio.sleep(0)           # let the spawned write task run
         assert client.set_calls == [{"pictureMode": "expert1"}]
+
+    asyncio.run(scenario())
+
+
+def test_wire_does_not_revert_the_lux_hooks_first_apply():
+    """The startup sequence that stranded the TV in Bright at 0.0 lux (mtin).
+
+    Subscribing pushes the current picture, then the current app; the lux task
+    starts and applies Dark. The echo of that write must not be corrected back
+    to Bright, which requires `wire` to hand the app id to the keeper so the
+    snapshot is recognized as a non-switch.
+    """
+    async def scenario():
+        client = FakeClient()
+        keeper = build_keeper(CFG)
+        t = [0.0]
+        on_pic, on_app = wire(keeper, client, clock=lambda: t[0])
+        await on_pic(_bright())          # picture snapshot: current = bright
+        await on_app("home")             # app snapshot, not a switch
+        assert keeper.set_desired("dark") is not None   # lux hook applies dark
+        t[0] = 0.2
+        await on_pic(_dark())            # the write echoes back as an event
+        await asyncio.sleep(0)
+        assert client.set_calls == []    # no "restoring bright"
 
     asyncio.run(scenario())
 
@@ -106,6 +131,7 @@ def test_wire_leaves_dolby_vision_alone():
         on_pic, on_app = wire(keeper, client, clock=lambda: t[0])
         await on_pic(_bright())
         t[0] = 5.0
+        await on_app("home")     # on-subscribe snapshot: baseline only
         await on_app("disneyplus")
         t[0] = 5.3
         await on_pic(_dv())              # DV -> UNKNOWN -> hands off
@@ -162,6 +188,7 @@ def test_wire_schedules_write_without_awaiting_it():
         on_pic, on_app = wire(keeper, client, clock=lambda: t[0], spawn=spy_spawn)
         await on_pic(_bright())
         t[0] = 10.0
+        await on_app("home")     # on-subscribe snapshot: baseline only
         await on_app("netflix")
         t[0] = 10.5
         await on_pic(_dark())

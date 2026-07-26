@@ -1,11 +1,11 @@
 ---
 # lg-tv-enhancer-mtin
 title: 'Startup race: keeper reverts the lux hook''s first apply, leaving the wrong preset latched for the whole band'
-status: todo
+status: completed
 type: bug
 priority: high
 created_at: 2026-07-26T04:37:56Z
-updated_at: 2026-07-26T04:37:56Z
+updated_at: 2026-07-26T04:47:53Z
 ---
 
 Reproduced on tv-dsp.home at 2026-07-26 00:35:54 by restarting `lg-tv-preset` in a dark room (0.0 lux):
@@ -36,6 +36,18 @@ Pre-existing since 7f7w shipped; unmasked by the restart in [[lg-tv-enhancer-g5b
 - Or make the keeper recognize writes originating from its own process rather than treating them as external flips
 - Regression test: fake clock, lux source reading dark, assert the seeded-bright keeper does not revert the first apply
 
-- [ ] Reproduce under test with an injected clock
-- [ ] Fix root cause
-- [ ] Verify on the Pi with a dark-room restart
+- [x] Reproduce under test with an injected clock
+- [x] Fix root cause
+- [x] Verify on the Pi with a dark-room restart
+
+## Summary of Changes
+
+Root cause was `Keeper.on_app_change` treating every app event as a switch. Subscribing to the current app delivers the foreground app immediately, so `serve()` armed a settle window on a snapshot; `poll_lux`s first apply landed inside it and `_evaluate(BRIGHT, DARK)` read the daemons own write as an app-induced flip.
+
+Fix: the keeper now takes the app id and arms only on a genuine change, with the first observation recording a baseline. A module-level `_UNSEEN` sentinel distinguishes never-observed from an app id of None, so a TV reporting a null foreground app still gets a baseline instead of re-arming forever.
+
+Tests: three keeper-level cases (snapshot does not arm, a real switch after the snapshot still corrects, a repeated same-app event does not arm) plus a wire-level regression replaying the incident sequence. The wire-level test was confirmed to fail against the pre-fix source (it wrote expert1) before the fix went in. Eight existing tests never modeled the on-subscribe snapshot and now route through an `app_switch` helper that sends it first. 90 pass.
+
+Verified on the Pi at 00:47 with a dark-room restart: `ambient lux -> dark (0.0 lux)` with no restoring line, TV fingerprint read back as `85,10,50` (Dark), one write in three minutes.
+
+Not verified in production: a real app switch still correcting a flip. Covered by unit tests only — it needs the TV in use to exercise.
