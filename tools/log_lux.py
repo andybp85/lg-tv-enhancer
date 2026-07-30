@@ -8,6 +8,10 @@ choosing dark/dim/bright boundaries and hysteresis widths (lg-tv-enhancer-7f7w).
 
 Ctrl-C to stop; rows are flushed as they're written, so a kill loses nothing
 and `tail -f lux.csv` works while it runs.
+
+For a spot check — "what is the room reading right now" — skip the CSV entirely:
+
+    venv/bin/python tools/log_lux.py --once
 """
 from __future__ import annotations
 
@@ -36,11 +40,18 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--address", type=lambda s: int(s, 0),
                         default=bh1750.DEFAULT_ADDRESS,
                         help="I2C address (default: 0x23)")
+    parser.add_argument("--once", action="store_true",
+                        help="print one reading and exit; no CSV, bare number so "
+                             "it composes with other commands")
     return parser.parse_args(argv)
 
 
 def main() -> None:
     args = parse_args()
+    if args.once:
+        with SMBus(I2C_BUS) as bus:
+            print(f"{bh1750.read_lux(bus, args.address):.1f}")
+        return
     # Append, so an interrupted run can be resumed into the same dataset.
     is_new = not args.out.exists()
     with args.out.open("a", newline="") as handle, SMBus(I2C_BUS) as bus:
