@@ -201,6 +201,41 @@ def test_lux_write_event_is_inert():
     assert k.set_desired(DARK) is None
 
 
+def test_lux_commit_inside_the_settle_window_is_not_reverted():
+    # A band commit can land within settle_secs of a genuine app switch. The
+    # write is ours, so its echo must not be read as an app-induced flip
+    # (lg-tv-enhancer-9x3h).
+    k = make_keeper()
+    k.on_picture_change(bright_settings(), now=0.0)  # current = bright
+    app_switch(k, now=10.0)                          # real switch, window to 13.0
+    assert k.set_desired(DARK) is not None           # lux commits dark mid-window
+    assert k.on_picture_change(dark_settings(), now=10.5) is None
+
+
+def test_window_protects_the_lux_band_after_our_write_lands():
+    # Once lux deliberately changes the preset mid-window, the preset worth
+    # restoring is the new one — not the stale snapshot from the app switch.
+    k = make_keeper()
+    k.on_picture_change(bright_settings(), now=0.0)
+    app_switch(k, now=10.0)
+    k.set_desired(DARK)
+    assert k.on_picture_change(dark_settings(), now=10.5) is None  # our echo
+    correction = k.on_picture_change(bright_settings(), now=11.0)
+    assert correction == Correction(mode="expert2", to_preset=DARK)
+
+
+def test_a_failed_write_does_not_swallow_a_later_unrelated_flip():
+    # If the write never lands, the expectation is spent on the next picture
+    # event regardless, so it cannot linger and mask corrections forever.
+    k = make_keeper()
+    k.on_picture_change(bright_settings(), now=0.0)
+    k.set_desired(DARK)                              # suppose this write fails
+    k.on_picture_change(bright_settings(), now=1.0)  # unrelated event spends it
+    app_switch(k, now=10.0)
+    correction = k.on_picture_change(dark_settings(), now=10.5)
+    assert correction == Correction(mode="expert1", to_preset=BRIGHT)
+
+
 def test_first_app_observation_does_not_arm_the_window():
     # Subscribing to current_app delivers the foreground app immediately. That
     # push is a snapshot, not a switch, so it must not arm a settle window: the

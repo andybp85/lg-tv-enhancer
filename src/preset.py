@@ -82,10 +82,14 @@ class Keeper:
     """State machine: correct an app-switch-induced ISF flip, ignore the rest.
 
     Fed a stream of app-change and picture-change events (with a monotonic
-    clock). An app change arms a short settle window; the first picture change
-    inside it that flipped from one ISF variant to the other yields a Correction
-    back to the pre-switch preset. Everything else — manual changes, Dolby
-    Vision, unknown presets, late events — updates the tracked preset only.
+    clock). A change of foreground app arms a short settle window; the first
+    picture change inside it that flipped from one ISF variant to the other
+    yields a Correction back to the pre-switch preset. Everything else — manual
+    changes, Dolby Vision, unknown presets, late events — updates the tracked
+    preset only.
+
+    Corrections it hands out are remembered, so the picture event each write
+    produces is recognized as ours and stays inert even inside a window.
     """
 
     def __init__(self, *, bright_fps: frozenset[tuple[int, int, int]],
@@ -99,6 +103,7 @@ class Keeper:
         self._before: str | None = None   # preset snapshot at the last app change
         self._deadline = 0.0              # settle-window end (monotonic)
         self._app: object = _UNSEEN       # last foreground app id seen
+        self._expected: str | None = None  # band a correction we issued should produce
 
     def on_app_change(self, app: object, now: float) -> None:
         """Arm a settle window, but only for a genuine switch.
@@ -131,17 +136,41 @@ class Keeper:
         """
         if band == self._current or self._current == UNKNOWN:
             return None
-        return Correction(mode=self._mode[band], to_preset=band)
+        return self._issue(Correction(mode=self._mode[band], to_preset=band))
+
+    def _issue(self, correction: Correction | None) -> Correction | None:
+        """Remember the band a correction should produce, so its echo is known.
+
+        Every write the daemon makes comes back as a picture event that is
+        otherwise indistinguishable from the TV flipping on its own — and inside
+        a settle window it would be "corrected", undoing what we just asked for
+        (lg-tv-enhancer-9x3h).
+        """
+        if correction is not None:
+            self._expected = correction.to_preset
+        return correction
 
     def on_picture_change(self, settings: Mapping[str, object], now: float) -> Correction | None:
         after = classify(settings, bright=self._bright_fps, dark=self._dark_fps)
+        if self._expected is not None:
+            # Spent on the first event either way: an expectation that outlived a
+            # failed write must not linger and mask later corrections.
+            expected, self._expected = self._expected, None
+            if after == expected:
+                self._current = after
+                if self._before is not None:
+                    # A window is open and we just changed the preset on purpose,
+                    # so the preset worth restoring is this one, not the snapshot
+                    # taken before the app switch.
+                    self._before = after
+                return None
         correction = None
         if self._before is not None:
             if now <= self._deadline:
                 correction = self._evaluate(self._before, after)
             self._before = None  # disarm on the first picture event, in or out of window
         self._current = after
-        return correction
+        return self._issue(correction)
 
     def _evaluate(self, before: str, after: str) -> Correction | None:
         variants = (BRIGHT, DARK)

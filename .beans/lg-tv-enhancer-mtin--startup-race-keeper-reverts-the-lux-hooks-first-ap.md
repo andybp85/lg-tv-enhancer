@@ -5,7 +5,7 @@ status: completed
 type: bug
 priority: high
 created_at: 2026-07-26T04:37:56Z
-updated_at: 2026-07-26T04:47:53Z
+updated_at: 2026-07-30T03:28:12Z
 ---
 
 Reproduced on tv-dsp.home at 2026-07-26 00:35:54 by restarting `lg-tv-preset` in a dark room (0.0 lux):
@@ -50,4 +50,6 @@ Tests: three keeper-level cases (snapshot does not arm, a real switch after the 
 
 Verified on the Pi at 00:47 with a dark-room restart: `ambient lux -> dark (0.0 lux)` with no restoring line, TV fingerprint read back as `85,10,50` (Dark), one write in three minutes.
 
-Not verified in production: a real app switch still correcting a flip. Covered by unit tests only — it needs the TV in use to exercise.
+Verified in production 2026-07-29 23:27:21: a real switch (HDMI1 -> youtube.leanback.v4) flipped the preset and the keeper logged `app switch flipped away from bright; restoring` + `wrote pictureMode=expert1`. Fingerprint read back as 90,90,65 (Bright).
+
+A read-only probe on the app subscription confirmed the two facts the fix depends on: the on-subscribe push (`youtube.leanback.v4`) arrives as a baseline that must not arm, and a real switch to `com.webos.app.hdmi1` is seen as a changed id that does arm. Since `_evaluate` fires only when both presets are recognized ISF variants, this also confirms HDMI1's per-input fingerprints are calibrated.
