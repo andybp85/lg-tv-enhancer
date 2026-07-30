@@ -175,6 +175,19 @@ Choose the band edges from that CSV — pick a deadband that sits in a sparse ga
 readings. Guessing is how the TV ends up hunting every time a cloud passes. Then set `LGTV_LUX_DARK_BELOW` /
 `LGTV_LUX_BRIGHT_ABOVE` / `LGTV_LUX_HOLD_SECS` and restart `lg-tv-preset`.
 
+Sanity-check the sensor's placement while you're there. Two failure modes don't show up in the CSV's shape, only in
+its scale:
+
+- **Blinded** — if the lit-room reading is a few lux, the whole band decision rests on two or three raw counts
+  (one count is 0.83 lux at default sensitivity), and a threshold can be missed by less than a count. Reposition
+  before lowering the edges to compensate.
+- **Seeing the screen** — aim the sensor at the room, never at the TV. Otherwise Bright begets Bright: the preset
+  raises the backlight, which raises the reading. Force each preset and compare readings to rule it out; a delta
+  near zero means there's no optical path.
+
+Response time is `LGTV_LUX_POLL_SECS` + `LGTV_LUX_HOLD_SECS`, and shortening the hold alone changes nothing —
+a commit needs two consecutive agreeing samples, so the poll interval floors it.
+
 ## Development
 
 Tests run anywhere — the webOS client is injected/faked, `astral` is pure math:
