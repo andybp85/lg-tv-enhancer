@@ -13,8 +13,10 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import errno
 import logging
 import os
+import socket
 import sys
 import time
 from dataclasses import dataclass
@@ -132,6 +134,50 @@ RECONNECT_BACKOFF = 5.0
 # How often to restate that the TV is unreachable. Long, because a powered-off
 # TV is the normal overnight case, not an incident.
 DOWN_HEARTBEAT_SECS = 300.0
+
+# Why the connection failed, which decides how loudly to say so. A TV that is
+# simply off is the common case for most of any day and must not read as a
+# fault; a bad key never fixes itself; a bug must never hide among either
+# (lg-tv-enhancer-qm9f).
+FAILURE_NORMAL = "normal"          # off, refused, unreachable, dropped
+FAILURE_CONFIG = "config"          # LGTV_HOST does not resolve
+FAILURE_AUTH = "auth"              # pairing rejected; retrying cannot help
+FAILURE_UNEXPECTED = "unexpected"  # anything else, including our own bugs
+
+# Matched by name, not isinstance, so importing bscpylgtv stays lazy — the test
+# suite and `--listen` run without the package installed.
+_AUTH_EXC_NAMES = frozenset({"PyLGTVPairException"})
+
+_NORMAL_ERRNOS = frozenset({
+    errno.ECONNREFUSED, errno.ECONNRESET, errno.EHOSTDOWN, errno.EHOSTUNREACH,
+    errno.ENETDOWN, errno.ENETUNREACH, errno.EPIPE, errno.ETIMEDOUT,
+})
+
+
+def classify_failure(exc: BaseException) -> str:
+    """Sort a connection failure into one of the FAILURE_* classes."""
+    if type(exc).__name__ in _AUTH_EXC_NAMES:
+        return FAILURE_AUTH
+    # gaierror subclasses OSError, so it has to be checked before the errno
+    # branch — its codes are EAI_*, which share numbers with unrelated errnos.
+    if isinstance(exc, socket.gaierror):
+        return FAILURE_CONFIG
+    if isinstance(exc, (ConnectionRefusedError, ConnectionResetError, TimeoutError)):
+        return FAILURE_NORMAL
+    if isinstance(exc, OSError) and exc.errno in _NORMAL_ERRNOS:
+        return FAILURE_NORMAL
+    return FAILURE_UNEXPECTED
+
+
+def _describe(exc: BaseException) -> str:
+    """Type and detail, for logging.
+
+    `asyncio.TimeoutError` carries no message, and bscpylgtv's exceptions set
+    `self.message` without calling `super().__init__`, so `str(exc)` is empty for
+    both — the reason would otherwise be dropped from the log entirely.
+    """
+    detail = str(exc) or str(getattr(exc, "message", "") or "")
+    return f"{type(exc).__name__}: {detail}" if detail else type(exc).__name__
 PING_INTERVAL = 30.0
 
 
@@ -255,6 +301,31 @@ async def serve(cfg: Config, *, source: LuxSource | None = None,
         await _safe_disconnect(client)
 
 
+_OUTAGE_LEVEL = {
+    FAILURE_NORMAL: logging.INFO,
+    FAILURE_CONFIG: logging.WARNING,
+    FAILURE_AUTH: logging.ERROR,
+    FAILURE_UNEXPECTED: logging.WARNING,
+}
+
+
+def _log_outage(kind: str, exc: BaseException, host: str) -> None:
+    """Open an outage at a volume that matches what it means."""
+    detail = _describe(exc)
+    if kind == FAILURE_AUTH:
+        log.error("TV rejected our pairing key (%s); reconnecting will not fix "
+                  "this — re-pair and set LGTV_KEY", detail)
+    elif kind == FAILURE_CONFIG:
+        log.warning("cannot resolve LGTV_HOST=%s (%s); a DHCP-reserved IP avoids "
+                    "a name that disappears with the lease", host, detail)
+    elif kind == FAILURE_NORMAL:
+        log.info("TV unreachable (%s); retrying every %.0fs — expected while it "
+                 "is powered off", detail, RECONNECT_BACKOFF)
+    else:
+        log.warning("unexpected keeper failure (%s); reconnecting every %.0fs",
+                    detail, RECONNECT_BACKOFF)
+
+
 async def run(cfg: Config, *, source: LuxSource | None = None,
               serve: Callable[..., Awaitable[None]] = serve,
               sleep: Sleep = asyncio.sleep,
@@ -271,10 +342,11 @@ async def run(cfg: Config, *, source: LuxSource | None = None,
     down_since: float | None = None
     last_beat = 0.0
     attempts = 0
+    kind: str | None = None
 
     def on_up() -> None:
-        nonlocal down_since, attempts
-        down_since, attempts = None, 0
+        nonlocal down_since, attempts, kind
+        down_since, attempts, kind = None, 0, None
 
     try:
         while True:
@@ -283,17 +355,21 @@ async def run(cfg: Config, *, source: LuxSource | None = None,
             except Exception as exc:  # noqa: BLE001 - any failure means reconnect
                 now = clock()
                 attempts += 1
-                if down_since is None:
-                    down_since, last_beat = now, now
-                    log.warning("preset keeper connection lost (%s: %s); "
-                                "reconnecting every %.0fs", type(exc).__name__,
-                                exc, RECONNECT_BACKOFF)
+                current = classify_failure(exc)
+                # A class change mid-outage is news in its own right: the
+                # 2026-07-26 incident went from refused to unresolvable, and the
+                # switch was the tell nobody got to see.
+                if down_since is None or current != kind:
+                    if down_since is None:
+                        down_since = now
+                    kind, last_beat = current, now
+                    _log_outage(current, exc, cfg.host)
                 elif now - last_beat >= DOWN_HEARTBEAT_SECS:
                     last_beat = now
-                    log.warning("still unreachable after %.0fm, %d attempts; the "
-                                "ambient lux hook is not polling (last error %s: %s)",
-                                (now - down_since) / 60, attempts,
-                                type(exc).__name__, exc)
+                    log.log(_OUTAGE_LEVEL[current],
+                            "still unreachable after %.0fm, %d attempts; the "
+                            "ambient lux hook is not polling (last %s)",
+                            (now - down_since) / 60, attempts, _describe(exc))
             await sleep(RECONNECT_BACKOFF)
     finally:
         if source is not None:

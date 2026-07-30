@@ -128,6 +128,21 @@ sudo systemctl enable --now lg-tv-preset
 journalctl -u lg-tv-preset -f
 ```
 
+### Reading the keeper's log
+
+It is quiet on purpose — presets apply once per band or per app switch, so a healthy keeper says nothing for hours.
+Failures are graded by what they mean, so the level tells you whether to act:
+
+| Level | Means |
+|---|---|
+| `INFO` `TV unreachable … expected while it is powered off` | Normal. The TV is off; it keeps retrying. Restated every 5 min, noting the lux hook isn't polling. |
+| `WARNING` `cannot resolve LGTV_HOST=…` | Config. A lease-tracking name stopped resolving — use a reserved IP. |
+| `ERROR` `TV rejected our pairing key` | Actionable. Retrying won't help; re-pair and set `LGTV_KEY`. |
+| `WARNING` `unexpected keeper failure` | A bug worth reporting, not a network problem. |
+
+A change of failure class mid-outage is logged immediately rather than waiting for the next heartbeat, since the
+transition is usually the diagnosis.
+
 ## Ambient-light hook (auto ISF Bright/Dark)
 
 Room brightness auto-picks the ISF preset. The sensor is a BH1750FVI on the Pi's I2C bus — the C9's built-in

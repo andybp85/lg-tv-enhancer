@@ -195,7 +195,8 @@ def test_run_logs_a_heartbeat_while_it_cannot_connect(caplog):
         with pytest.raises(StopLoop):
             await run(CFG, serve=dead_serve, sleep=sleep, clock=lambda: t[0])
 
-    with caplog.at_level(logging.WARNING):
+    # INFO, because a refused connection means the TV is off — the normal case.
+    with caplog.at_level(logging.INFO):
         asyncio.run(scenario())
     beats = [m for m in _messages(caplog) if "still unreachable" in m]
     assert len(beats) == 2  # at 300s and 600s of simulated downtime
@@ -221,10 +222,126 @@ def test_a_drop_after_a_successful_reconnect_warns_again(caplog):
         with pytest.raises(StopLoop):
             await run(CFG, serve=flapping_serve, sleep=sleep, clock=lambda: 0.0)
 
-    with caplog.at_level(logging.WARNING):
+    with caplog.at_level(logging.INFO):
         asyncio.run(scenario())
-    lost = [m for m in _messages(caplog) if "connection lost" in m]
-    assert len(lost) == 2  # the first drop, and the one after reconnecting
+    # Both drops are the same failure class, so only on_up resetting the outage
+    # can produce a second opening line.
+    opened = [m for m in _messages(caplog) if "TV unreachable" in m]
+    assert len(opened) == 2  # the first drop, and the one after reconnecting
+
+
+import errno
+import socket
+
+from preset_daemon import (
+    FAILURE_AUTH,
+    FAILURE_CONFIG,
+    FAILURE_NORMAL,
+    FAILURE_UNEXPECTED,
+    _describe,
+    classify_failure,
+)
+
+
+class PyLGTVPairException(Exception):
+    """Shaped like the real one: sets .message without calling super().__init__,
+    so str(exc) is empty. Named to match, since preset_daemon classifies by name
+    to keep the bscpylgtv import lazy."""
+
+    def __init__(self, message):
+        self.message = message
+
+
+def test_classify_a_powered_off_tv_as_normal():
+    assert classify_failure(ConnectionRefusedError()) == FAILURE_NORMAL
+    assert classify_failure(TimeoutError()) == FAILURE_NORMAL
+    assert classify_failure(ConnectionResetError()) == FAILURE_NORMAL
+    assert classify_failure(OSError(errno.EHOSTUNREACH, "no route")) == FAILURE_NORMAL
+
+
+def test_classify_name_resolution_failure_as_config():
+    # gaierror subclasses OSError, so it must be tested before the errno checks.
+    assert classify_failure(socket.gaierror(-2, "Name or service not known")) == FAILURE_CONFIG
+
+
+def test_classify_pairing_rejection_as_auth():
+    assert classify_failure(PyLGTVPairException("Unable to pair")) == FAILURE_AUTH
+
+
+def test_classify_a_programming_error_as_unexpected():
+    # A bug must never be filed under "the TV is probably off" and logged at INFO.
+    assert classify_failure(TypeError("got an unexpected keyword argument")) == FAILURE_UNEXPECTED
+
+
+def test_describe_falls_back_to_a_message_attribute():
+    # bscpylgtv's exceptions and asyncio.TimeoutError both leave str(exc) empty.
+    assert _describe(PyLGTVPairException("Unable to pair")) == "PyLGTVPairException: Unable to pair"
+    assert _describe(TimeoutError()) == "TimeoutError"
+    assert _describe(ConnectionRefusedError("refused")) == "ConnectionRefusedError: refused"
+
+
+def _run_until_stopped(exc: BaseException, calls_before_stop: int = 2):
+    async def scenario():
+        calls = [0]
+
+        async def failing_serve(cfg, *, source=None, on_up=None):
+            calls[0] += 1
+            raise exc
+
+        async def sleep(secs):
+            if calls[0] >= calls_before_stop:
+                raise StopLoop
+
+        with pytest.raises(StopLoop):
+            await run(CFG, serve=failing_serve, sleep=sleep, clock=lambda: 0.0)
+
+    asyncio.run(scenario())
+
+
+def test_an_off_tv_is_reported_at_info_not_as_an_error(caplog):
+    # A powered-off TV is the normal overnight state and must not read as a fault.
+    with caplog.at_level(logging.INFO):
+        _run_until_stopped(ConnectionRefusedError("refused"))
+    levels = {r.levelno for r in caplog.records}
+    assert logging.INFO in levels
+    assert logging.WARNING not in levels and logging.ERROR not in levels
+
+
+def test_a_pairing_rejection_is_reported_as_an_error(caplog):
+    # Retrying cannot fix a bad key, so this one has to be loud and actionable.
+    with caplog.at_level(logging.INFO):
+        _run_until_stopped(PyLGTVPairException("Unable to pair"))
+    errors = [r for r in caplog.records if r.levelno == logging.ERROR]
+    assert len(errors) == 1
+    assert "Unable to pair" in errors[0].getMessage()
+
+
+def test_a_change_of_failure_class_mid_outage_is_reported(caplog):
+    # The 2026-07-26 incident went from "refused" to "cannot resolve" while the
+    # TV stayed reachable by IP. That switch is the diagnosis, so it must not
+    # wait out a 300s heartbeat to appear.
+    async def scenario():
+        calls = [0]
+
+        async def degrading_serve(cfg, *, source=None, on_up=None):
+            calls[0] += 1
+            if calls[0] == 1:
+                raise ConnectionRefusedError("refused")
+            raise socket.gaierror(-2, "Name or service not known")
+
+        async def sleep(secs):
+            if calls[0] >= 3:
+                raise StopLoop
+
+        with pytest.raises(StopLoop):
+            await run(CFG, serve=degrading_serve, sleep=sleep, clock=lambda: 0.0)
+
+    with caplog.at_level(logging.INFO):
+        asyncio.run(scenario())
+    assert any("TV unreachable" in m for m in _messages(caplog))
+    resolve = [r for r in caplog.records if "cannot resolve" in r.getMessage()]
+    assert len(resolve) == 1
+    assert resolve[0].levelno == logging.WARNING
 
 
 def test_wire_schedules_write_without_awaiting_it():
