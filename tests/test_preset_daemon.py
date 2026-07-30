@@ -152,7 +152,7 @@ def test_run_reconnects_after_serve_failure():
     async def scenario():
         attempts = []
 
-        async def flaky_serve(cfg, *, source=None):
+        async def flaky_serve(cfg, *, source=None, on_up=None):
             attempts.append(1)
             raise ConnectionResetError("connection dropped")
 
@@ -168,6 +168,63 @@ def test_run_reconnects_after_serve_failure():
         assert len(attempts) == 3  # serve retried each time the backoff elapsed
 
     asyncio.run(scenario())
+
+
+import logging
+
+
+def _messages(caplog) -> list[str]:
+    return [r.getMessage() for r in caplog.records]
+
+
+def test_run_logs_a_heartbeat_while_it_cannot_connect(caplog):
+    # An unreachable TV must not be silent: poll_lux dies with the connection,
+    # so without a periodic line a dead hook reads exactly like a quiet healthy
+    # one (lg-tv-enhancer-ulp5).
+    async def scenario():
+        async def dead_serve(cfg, *, source=None, on_up=None):
+            raise ConnectionRefusedError("refused")
+
+        t = [0.0]
+
+        async def sleep(secs):
+            t[0] += secs
+            if t[0] > 700:
+                raise StopLoop
+
+        with pytest.raises(StopLoop):
+            await run(CFG, serve=dead_serve, sleep=sleep, clock=lambda: t[0])
+
+    with caplog.at_level(logging.WARNING):
+        asyncio.run(scenario())
+    beats = [m for m in _messages(caplog) if "still unreachable" in m]
+    assert len(beats) == 2  # at 300s and 600s of simulated downtime
+    assert "lux hook is not polling" in beats[0]
+
+
+def test_a_drop_after_a_successful_reconnect_warns_again(caplog):
+    # serve() never returns normally, so the old `failing` flag latched True and
+    # only the first disconnect of a process's life was ever reported.
+    async def scenario():
+        calls = [0]
+
+        async def flapping_serve(cfg, *, source=None, on_up=None):
+            calls[0] += 1
+            if calls[0] == 2 and on_up is not None:
+                on_up()  # connected this time, then dropped
+            raise ConnectionResetError("dropped")
+
+        async def sleep(secs):
+            if calls[0] >= 3:
+                raise StopLoop
+
+        with pytest.raises(StopLoop):
+            await run(CFG, serve=flapping_serve, sleep=sleep, clock=lambda: 0.0)
+
+    with caplog.at_level(logging.WARNING):
+        asyncio.run(scenario())
+    lost = [m for m in _messages(caplog) if "connection lost" in m]
+    assert len(lost) == 2  # the first drop, and the one after reconnecting
 
 
 def test_wire_schedules_write_without_awaiting_it():

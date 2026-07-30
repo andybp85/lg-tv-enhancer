@@ -129,6 +129,9 @@ CONNECT_TIMEOUT = 15.0
 DISCONNECT_TIMEOUT = 5.0
 HEARTBEAT_SECS = 30.0
 RECONNECT_BACKOFF = 5.0
+# How often to restate that the TV is unreachable. Long, because a powered-off
+# TV is the normal overnight case, not an incident.
+DOWN_HEARTBEAT_SECS = 300.0
 PING_INTERVAL = 30.0
 
 
@@ -183,8 +186,13 @@ async def poll_lux(source: LuxSource, keeper: Keeper, client, cfg: Config, *,
 
 async def _make_client(host: str, key: str | None) -> object:
     from bscpylgtv import WebOsClient  # lazy: tests run without the package
+    # connect_retry_attempts=1 disables the library's own 9-attempt retry, which
+    # duplicates `run`'s reconnect loop and `print`s "Connection attempt: N" on
+    # every try — 876 lines a day against an off TV, burying our own log
+    # (lg-tv-enhancer-ulp5). One retry policy, and it lives in `run`.
     return await WebOsClient.create(host, client_key=key, states=[],
-                                    ping_interval=PING_INTERVAL)
+                                    ping_interval=PING_INTERVAL,
+                                    connect_retry_attempts=1)
 
 
 async def _safe_disconnect(client) -> None:
@@ -199,10 +207,14 @@ async def serve(cfg: Config, *, source: LuxSource | None = None,
                 client_factory: ClientFactory = _make_client,
                 clock: Callable[[], float] = time.monotonic,
                 lux_clock: Callable[[], datetime] = _utc_now,
-                sleep: Sleep = asyncio.sleep) -> None:
+                sleep: Sleep = asyncio.sleep,
+                on_up: Callable[[], None] = lambda: None) -> None:
     """One connection lifetime. Raises when the connection dies (heartbeat
     timeout / subscription error); the caller reconnects. With a lux `source`,
-    an ambient poll task runs on this same connection and is torn down with it."""
+    an ambient poll task runs on this same connection and is torn down with it.
+
+    Calls `on_up` once the subscriptions are live. This never returns normally,
+    so that callback is the only way the caller learns an outage ended."""
     keeper = build_keeper(cfg)
     client = await asyncio.wait_for(client_factory(cfg.host, cfg.key), CONNECT_TIMEOUT)
     lux_task: asyncio.Task[None] | None = None
@@ -219,6 +231,7 @@ async def serve(cfg: Config, *, source: LuxSource | None = None,
         # comes back looking like an app-induced flip (lg-tv-enhancer-mtin).
         await asyncio.wait_for(client.subscribe_current_app(on_app), REQUEST_TIMEOUT)
         log.info("preset keeper connected to %s", cfg.host)
+        on_up()
         if source is not None:
             lux_task = asyncio.create_task(
                 poll_lux(source, keeper, client, cfg, clock=lux_clock, sleep=sleep))
@@ -244,21 +257,43 @@ async def serve(cfg: Config, *, source: LuxSource | None = None,
 
 async def run(cfg: Config, *, source: LuxSource | None = None,
               serve: Callable[..., Awaitable[None]] = serve,
-              sleep: Sleep = asyncio.sleep) -> None:
+              sleep: Sleep = asyncio.sleep,
+              clock: Callable[[], float] = time.monotonic) -> None:
     """Reconnect forever. Owns the lux source's lifetime (closed on exit); the
-    per-connection lux task is spawned inside `serve`."""
-    failing = False
+    per-connection lux task is spawned inside `serve`.
+
+    While the TV is unreachable there is nothing else to log — `poll_lux` dies
+    with the connection, and it is silent by design even when healthy — so a
+    down hook is indistinguishable from a quiet one without a heartbeat
+    (lg-tv-enhancer-ulp5). `serve` reports a successful connect through `on_up`
+    rather than by returning, since it only returns by raising.
+    """
+    down_since: float | None = None
+    last_beat = 0.0
+    attempts = 0
+
+    def on_up() -> None:
+        nonlocal down_since, attempts
+        down_since, attempts = None, 0
+
     try:
         while True:
             try:
-                await serve(cfg, source=source)
-                failing = False
+                await serve(cfg, source=source, on_up=on_up)
             except Exception as exc:  # noqa: BLE001 - any failure means reconnect
-                if not failing:
+                now = clock()
+                attempts += 1
+                if down_since is None:
+                    down_since, last_beat = now, now
                     log.warning("preset keeper connection lost (%s: %s); "
                                 "reconnecting every %.0fs", type(exc).__name__,
                                 exc, RECONNECT_BACKOFF)
-                    failing = True
+                elif now - last_beat >= DOWN_HEARTBEAT_SECS:
+                    last_beat = now
+                    log.warning("still unreachable after %.0fm, %d attempts; the "
+                                "ambient lux hook is not polling (last error %s: %s)",
+                                (now - down_since) / 60, attempts,
+                                type(exc).__name__, exc)
             await sleep(RECONNECT_BACKOFF)
     finally:
         if source is not None:
