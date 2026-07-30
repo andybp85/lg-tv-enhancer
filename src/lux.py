@@ -35,12 +35,13 @@ class Bands:
 
 @dataclass(frozen=True)
 class BandState:
-    band: str                     # committed band the TV currently reflects
+    band: Optional[str]           # committed band the TV reflects; None only at
+                                  # a cold start inside the deadband
     pending: Optional[str]        # band awaiting debounce, or None if settled
     since: Optional[datetime]     # when `pending` first appeared
 
 
-def _target(current: str, lux: float, bands: Bands) -> str:
+def _target(current: Optional[str], lux: float, bands: Bands) -> Optional[str]:
     """Band the reading argues for, applying hysteresis (deadband holds current)."""
     if lux < bands.enter_dark_below:
         return DARK
@@ -52,10 +53,16 @@ def _target(current: str, lux: float, bands: Bands) -> str:
 def initial_state(lux: float, bands: Bands) -> BandState:
     """Cold-start band, applied immediately (no prior band to debounce against).
 
-    In the deadband there is no history to hold, so default to BRIGHT rather than
-    strand the viewer in Dark at boot.
+    A reading inside the deadband commits to neither band, leaving `band` None:
+    it is the one place the reading cannot say which band is right, and the
+    preset already on the TV — whatever the last committed band or the viewer
+    chose — beats a constant. A genuinely bright room reads above the edge and
+    still applies Bright at once (lg-tv-enhancer-80lc).
+
+    Once a band is committed, `_target` holds it through the deadband, so `band`
+    never returns to None. It is a startup-only state.
     """
-    return BandState(_target(BRIGHT, lux, bands), None, None)
+    return BandState(_target(None, lux, bands), None, None)
 
 
 def select_band(state: BandState, lux: float, now: datetime, bands: Bands) -> BandState:

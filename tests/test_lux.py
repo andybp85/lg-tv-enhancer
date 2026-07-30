@@ -27,9 +27,29 @@ def test_cold_start_snaps_without_waiting():
     assert initial_state(50.0, BANDS).band == BRIGHT
 
 
-def test_cold_start_in_deadband_defaults_bright():
-    # Safer to open on Bright than to strand the user in Dark at boot.
-    assert initial_state(2.0, BANDS).band == BRIGHT
+def test_cold_start_in_deadband_commits_to_neither_band():
+    # The deadband is the one place we cannot tell which band is right, so the
+    # preset already on the TV — whatever the last band or the viewer chose — is
+    # better information than a constant (lg-tv-enhancer-80lc).
+    assert initial_state(2.0, BANDS).band is None
+
+
+def test_an_uncommitted_start_stays_uncommitted_in_the_deadband():
+    start = utc(2026, 7, 20, 6, 0)
+    state = hold(initial_state(2.0, BANDS), 2.0, start, secs=120)
+    assert state.band is None
+
+
+def test_an_uncommitted_start_commits_bright_once_light_arrives():
+    start = utc(2026, 7, 20, 6, 0)
+    state = hold(initial_state(2.0, BANDS), 50.0, start, secs=60)
+    assert state.band == BRIGHT
+
+
+def test_an_uncommitted_start_commits_dark_once_light_goes():
+    start = utc(2026, 7, 20, 21, 0)
+    state = hold(initial_state(2.0, BANDS), 0.0, start, secs=60)
+    assert state.band == DARK
 
 
 def test_darkness_held_long_enough_commits_dark():

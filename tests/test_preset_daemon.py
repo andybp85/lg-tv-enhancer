@@ -443,6 +443,31 @@ def test_lux_applies_dark_immediately_when_room_starts_dark():
     asyncio.run(scenario())
 
 
+def test_lux_writes_nothing_when_the_room_starts_in_the_deadband():
+    # A restart at dawn or dusk must not jump the backlight. CFG's edges are
+    # 1.0/3.0, so 2.0 is ambiguous and the TV keeps the preset it already has
+    # (lg-tv-enhancer-80lc).
+    async def scenario():
+        client, keeper = FakeClient(), build_keeper(CFG)
+        keeper.on_picture_change(_dark(), now=0.0)  # viewer is on Dark
+        await drive_lux([2.0, 2.0, 2.0], keeper, client)
+        assert client.set_calls == []
+
+    asyncio.run(scenario())
+
+
+def test_lux_commits_from_the_deadband_once_a_reading_is_definite():
+    # And it is not stuck: the first decisive reading applies, debounce included.
+    async def scenario():
+        client, keeper = FakeClient(), build_keeper(CFG)
+        keeper.on_picture_change(_dark(), now=0.0)
+        # 30s hold at a 30s poll needs two agreeing samples to commit.
+        await drive_lux([2.0, 50.0, 50.0, 50.0], keeper, client)
+        assert client.set_calls == [{"pictureMode": "expert1"}]
+
+    asyncio.run(scenario())
+
+
 def test_lux_ignores_a_brief_darkening():
     async def scenario():
         client, keeper = FakeClient(), build_keeper(CFG)
