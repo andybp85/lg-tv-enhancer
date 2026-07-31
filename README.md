@@ -226,6 +226,29 @@ python3 -m venv venv && venv/bin/pip install -r requirements.txt pytest
 venv/bin/pytest
 ```
 
+### Versioning
+
+[Semantic Versioning](https://semver.org/spec/v2.0.0.html), with the version in `src/version.py`
+and changes recorded in [CHANGELOG.md](CHANGELOG.md). There is no packaging manifest to hold it,
+because this is deployed by copying the tree onto the Pi rather than installed.
+
+SemVer is only meaningful against a declared surface. Here that is what a **deployed instance**
+depends on, not what a Python caller would:
+
+- the `LGTV_*` environment variables — names, accepted values, and defaults
+- the systemd unit names, and which daemon owns which behavior
+- the CLI of anything under `tools/`
+- observable behavior an operator relies on: which preset gets applied when, and the log lines
+  documented above as worth grepping for
+
+Everything under `src/` is internal. Nothing imports this as a library, so modules may be split,
+renamed, or rewritten in a patch release. Renaming an env var or changing a default is breaking;
+adding one is a feature.
+
+The project is `0.x` — the surface above may still change. Reaching `1.0.0` should be a decision
+made when it has stopped changing and something other than one Pi depends on it, not a milestone
+reached by accumulating patches.
+
 ## Reference: the bigger TV-enhancement projects
 
 Ideas beyond this daemon's scope, kept here as jumping-off points:
