@@ -25,6 +25,7 @@ from astral import Observer
 
 import tv
 from sun import NIGHT, current_phase
+from version import __version__
 
 log = logging.getLogger("lg-tv-enhancer")
 
@@ -96,8 +97,8 @@ def main() -> None:
         stream=sys.stdout,
     )
     cfg = load_config()
-    log.info("watching sun at (%.4f, %.4f); TV at %s; poll %.0fs",
-             cfg.lat, cfg.lon, cfg.host, cfg.poll_secs)
+    log.info("scheduler %s watching sun at (%.4f, %.4f); TV at %s; poll %.0fs",
+             __version__, cfg.lat, cfg.lon, cfg.host, cfg.poll_secs)
     try:
         asyncio.run(run(cfg))
     except KeyboardInterrupt:

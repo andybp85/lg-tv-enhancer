@@ -29,3 +29,5 @@ the git log.
   debounce hold, so the preset does not hunt.
 - `tools/log_lux.py` — logs sensor readings to CSV for calibrating those band edges, with a
   one-shot mode for a single reading.
+- Both daemons log their version in the startup line. Deploys are a file copy onto a box with
+  no git checkout, so this is the only way to tell which build is actually running.

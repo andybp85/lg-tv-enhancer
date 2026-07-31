@@ -26,6 +26,7 @@ from typing import Awaitable, Callable, Mapping
 from lux import Bands, initial_state, select_band
 from luxsource import LuxSource, make_source
 from preset import Correction, Keeper, parse_fingerprints
+from version import __version__
 
 
 @dataclass(frozen=True)
@@ -411,8 +412,8 @@ def main() -> None:
         asyncio.run(listen(cfg))
         return
     source = make_source()
-    log.info("preset keeper watching %s (bright=%s dark=%s, settle %.0fs)%s",
-             cfg.host, cfg.bright_mode, cfg.dark_mode, cfg.settle_secs,
+    log.info("preset keeper %s watching %s (bright=%s dark=%s, settle %.0fs)%s",
+             __version__, cfg.host, cfg.bright_mode, cfg.dark_mode, cfg.settle_secs,
              "" if source is None else "; ambient lux hook enabled")
     try:
         asyncio.run(run(cfg, source=source))
