@@ -190,6 +190,20 @@ Choose the band edges from that CSV — pick a deadband that sits in a sparse ga
 readings. Guessing is how the TV ends up hunting every time a cloud passes. Then set `LGTV_LUX_DARK_BELOW` /
 `LGTV_LUX_BRIGHT_ABOVE` / `LGTV_LUX_HOLD_SECS` and restart `lg-tv-preset`.
 
+Set **both** edges explicitly, even if one matches its default. They define a deadband, not a threshold with a
+margin, so leaving one unset means half the deadband's width is invisible in your config and only the other half
+ever gets calibrated.
+
+Land each edge *between* two reportable readings, never adjacent to one. In H-res the BH1750 reports `raw / 1.2`,
+so only multiples of 0.833 lux can occur — 4.17, 5.00, 5.83, 6.67, 7.50 and so on. A steady room pins to one of
+those steps and stays there, which makes an edge just under it look far safer than it is: if the room reads 7.50,
+an edge of 7.0 is a single count from losing the band, because the next reachable reading down is 6.67. Take the
+midpoint between the step the room sits on and the one you want it to survive falling to.
+
+Beware of reasoning about band changes by bucketing the CSV into dark/mid/bright and counting transitions. That
+overcounts badly: readings inside the deadband hold the committed band, so mid↔bright churn produces no preset
+change at all. Only a crossing of the *far* edge counts.
+
 Sanity-check the sensor's placement while you're there. Two failure modes don't show up in the CSV's shape, only in
 its scale:
 
